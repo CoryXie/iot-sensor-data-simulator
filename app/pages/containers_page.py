@@ -4,6 +4,7 @@ from components.container_card import ContainerCard
 from components.live_view_dialog import LiveViewDialog
 from model.container import Container
 from model.device import Device
+from utils.iot_hub_helper import IoTHubHelper
 
 
 class ContainersPage:
@@ -31,26 +32,26 @@ class ContainersPage:
         '''Sets up the menu bar'''
         with ui.row().classes('p-4 w-full flex items-center justify-between bg-gray-200 rounded-lg shadow-md'):
             # Create container button
-            ui.button('Neuen Container erstellen',
+            ui.button('Create New Container',
                       on_click=lambda: self.open_create_container_dialog()).classes('')
 
             # Container stats
             with ui.row():
                 with ui.row().classes('gap-1'):
-                    ui.label('Gesamt:').classes('text-sm font-medium')
+                    ui.label('Total:').classes('text-sm font-medium')
                     ui.label().classes('text-sm').bind_text(self, 'containers_count')
                 with ui.row().classes('gap-1'):
-                    ui.label('Aktiv:').classes('text-sm font-medium')
+                    ui.label('Active:').classes('text-sm font-medium')
                     ui.label().classes('text-sm').bind_text(self, 'active_containers_count')
                 with ui.row().classes('gap-1'):
-                    ui.label('Inaktiv:').classes('text-sm font-medium')
+                    ui.label('Inactive:').classes('text-sm font-medium')
                     ui.label().classes('text-sm').bind_text(self, 'inactive_containers_count')
 
             # Filter
             with ui.row():
                 self.filter_input = ui.input(
                     placeholder='Filter', on_change=self.filter_handler).classes('w-44')
-                self.filter_state_select = ui.select({1: "Alle", 2: "Aktiv", 3: "Inaktiv"},
+                self.filter_state_select = ui.select({1: "All", 2: "Active", 3: "Inactive"},
                           value=1, on_change=self.filter_handler).classes('w-24')
 
     def setup_cards_grid(self):
@@ -60,7 +61,7 @@ class ContainersPage:
         self.setup_note_label()
 
         if len(self.containers) == 0:
-            self.show_note("Keine Container vorhanden")
+            self.show_note("No Containers available")
         else:
             with self.cards_grid:
                 for container in self.containers:
@@ -103,7 +104,7 @@ class ContainersPage:
             card.visible = card in results
 
         if len(results) == 0:
-            self.show_note("Kein Treffer")
+            self.show_note("No matches")
         else:
             self.hide_note()
 
@@ -125,18 +126,18 @@ class ContainersPage:
                 "flat").classes("absolute top-6 right-6 px-2 text-black z-10")
 
             with ui.stepper().classes('w-full').props('vertical') as stepper:
-                with ui.step('Allgemein'):
+                with ui.step('General'):
                     with ui.column():
                         name_input = ui.input('Name*')
                         description_textarea = ui.textarea(
-                            label='Beschreibung (max. 255 Zeichen)', validation={'Maximal 255 Zeichen erlaubt!': lambda value: len(value) < 256}).classes('w-full')
-                        location_input = ui.input('Standort').classes('w-full')
+                            label='Description (max. 255 characters)', validation={'Maximum 255 characters allowed!': lambda value: len(value) < 256}).classes('w-full')
+                        location_input = ui.input('Location').classes('w-full')
                     with ui.stepper_navigation():
-                        ui.button('Abbrechen', on_click=lambda: dialog.close()).props(
+                        ui.button('Cancel', on_click=lambda: dialog.close()).props(
                             'flat')
-                        ui.button('Weiter', on_click=lambda: self.check_container_general_input(
+                        ui.button('Next', on_click=lambda: self.check_container_general_input(
                             stepper, name_input, description_textarea))
-                with ui.step('Geräte'):
+                with ui.step('Devices'):
                     devices = Device.get_all_unassigned()
                         
                     devices_options = {
@@ -144,17 +145,17 @@ class ContainersPage:
 
                     if len(devices) == 0:
                         ui.label(
-                            "Es sind keine freien Geräte verfügbar.")
+                            "No devices available.")
                     else:
                         ui.label(
-                            "Wähle die Geräte aus, die dem Container zugeordnet werden sollen. Mehrfachauswahl möglich.")
-                    devices_input = ui.select(devices_options, multiple=True, label='Geräte auswählen').props(
+                            "Select the devices to be assigned to the container. Multiple selection possible.")
+                    devices_input = ui.select(devices_options, multiple=True, label='Select devices').props(
                         'use-chips').classes('sm:w-64')
 
                     with ui.stepper_navigation():
-                        ui.button('Zurück', on_click=stepper.previous).props(
+                        ui.button('Back', on_click=stepper.previous).props(
                             'flat')
-                        ui.button('Erstellen', on_click=lambda: self.complete_container_creation(
+                        ui.button('Create', on_click=lambda: self.complete_container_creation(
                             dialog, name_input, description_textarea, location_input, devices_input))
 
     def check_container_general_input(self, stepper, name_input, description_textarea):
@@ -162,19 +163,19 @@ class ContainersPage:
 
         # Check if name is empty
         if name_input.value == '':
-            ui.notify('Bitte gib einen Namen an.',
+            ui.notify('Please enter a name.',
                       type='negative')
             return
         # Check if name is already in use
         else:
             name_in_use = Container.check_if_name_in_use(name_input.value)
             if name_in_use:
-                ui.notify('Es existiert bereits ein Container mit diesem Namen.', type='negative')
+                ui.notify('A container with this name already exists.', type='negative')
                 return
         
         # Check if description is too long
         if len(description_textarea.value) > 255:
-            ui.notify('Die Beschreibung darf maximal 255 Zeichen lang sein.',
+            ui.notify('Description must not exceed 255 characters.',
                       type='negative')
             return
 
@@ -185,7 +186,7 @@ class ContainersPage:
         self.create_container(name_input.value, description_textarea.value,
                               location_input.value, devices_input.value)
         
-        ui.notify('Container erfolgreich erstellt.', type='positive')
+        ui.notify('Container created successfully.', type='positive')
         dialog.close()
 
     def create_container(self, name, description, location, device_ids):
@@ -207,7 +208,7 @@ class ContainersPage:
     def start_container(self, container, interface):
         '''Starts the container simulation'''
         if len(container.devices) == 0:
-            ui.notify("Es sind keine Geräte vorhanden!", type="warning")
+            ui.notify("No devices available!", type="warning")
             return
 
         container.start(interface, success_callback=self.start_container_success_handler, iot_hub_helper=self.iot_hub_helper)
@@ -229,7 +230,7 @@ class ContainersPage:
         '''Deletes the container'''
         if container.is_active:
             ui.notify(
-                'Container ist aktiv und kann nicht gelöscht werden.', type='warning')
+                'Container is active and cannot be deleted.', type='warning')
             return
 
         container.delete()
@@ -240,17 +241,17 @@ class ContainersPage:
         del self.cards[index]
 
         ui.notify(
-            f"Container {container.name} erfolgreich gelöscht", type="positive")
+            f"Container {container.name} deleted successfully", type="positive")
         self.update_stats()
         dialog.close()
 
         if len(self.containers) == 0:
-            self.show_note("Keine Container vorhanden")
+            self.show_note("No Containers available")
 
     def show_live_view_dialog(self, container):
         '''Shows the live view dialog'''
         if len(container.devices) == 0:
-            ui.notify("Es sind keine Geräte vorhanden!", type="warning")
+            ui.notify("No devices available!", type="warning")
             return
 
         self.live_view_dialog.show(container)

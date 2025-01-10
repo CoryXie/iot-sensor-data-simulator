@@ -12,6 +12,12 @@ class Container(ContainerModel):
 
     message_count = None
     device_clients = {}
+    thread = None
+
+    def __init__(self, *args, **kwargs):
+        '''Initializes the container'''
+        super().__init__(*args, **kwargs)
+        self.thread = None
 
     @staticmethod
     def get_all():
@@ -165,18 +171,31 @@ class Container(ContainerModel):
 
     def stop(self):
         '''Stops the container simulation'''
-        if self.is_active is False:
+        if not self.is_active:
             return
 
         # Stop sensors from generating data
         for sensor in self.get_sensors():
             sensor.stop_simulation()
 
-        # Stop container thread
-        self.thread.stop()
-        self.thread.join()
+        try:
+            # Stop container thread if it exists
+            if hasattr(self, 'thread') and self.thread is not None:
+                self.thread.stop()
+                self.thread.join(timeout=5)  # Wait up to 5 seconds for thread to finish
+                self.thread = None
 
-        self.message_count = None
+            # Reset container state
+            self.is_active = False
+            self.start_time = None
+            self.message_count = None
+            Container.session.commit()
+        except Exception as e:
+            print(f"Error stopping container: {str(e)}")
+            # Ensure container is marked as stopped even if there's an error
+            self.is_active = False
+            self.start_time = None
+            Container.session.commit()
 
     def get_sensors(self):
         '''Returns all sensors in the container'''

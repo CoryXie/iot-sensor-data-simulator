@@ -75,10 +75,10 @@ class SensorItem:
                     ui.row().classes("mt-4 mb-2 h-px w-full bg-gray-200 border-0")
 
                     with ui.column().classes("gap-1"):
-                        ui.label("Gerät").classes("text-lg font-semibold mt-2")
+                        ui.label("Device").classes("text-lg font-semibold mt-2")
 
                         with ui.column().classes("gap-2"):
-                            ui.label("Wähle aus zu welchem Gerät dieser Sensor gehören soll.")
+                            ui.label("Select which device this sensor should belong to.")
                             devices = Device.get_all()
                             device_options = {device.id: device.name for device in devices}
                             preselect_value = self.sensor.device.id if self.sensor.device else None
@@ -106,7 +106,7 @@ class SensorItem:
 
                     # Show error simulation settings if error definition is set
                     if self.error_definition:
-                        ui.label("Fehlersimulation").classes("text-[16px] font-medium mt-8 mb-4")
+                        ui.label("Error Simulation").classes("text-[16px] font-medium mt-8 mb-4")
 
                         with ui.grid().classes("grid grid-cols-2 gap-x-10"):
                             for key, value in self.error_definition.items():
@@ -135,7 +135,7 @@ class SensorItem:
         Sensor.session.commit()
         
         self.device_name_label.text = new_device.name
-        ui.notify(f"Änderung erfolgreich gespeichert.", type="positive")
+        ui.notify(f"Changes saved successfully.", type="positive")
 
     def _check_if_container_is_active(self):
         '''Checks if the parent container is active'''

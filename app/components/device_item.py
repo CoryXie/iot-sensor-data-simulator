@@ -42,7 +42,7 @@ class DeviceItem:
                 with ui.row().classes("grid md:grid-cols-2 gap-4 mt-4"):
                     # General information
                     with ui.column().classes("gap-4"):
-                        ui.label("Allgemein").classes("text-lg font-semibold mt-2")
+                        ui.label("General").classes("text-lg font-semibold mt-2")
                         with ui.row().classes("gap-10"):
                             with ui.column().classes("gap-0"):
                                 ui.label("ID").classes("text-sm text-gray-500")
@@ -58,7 +58,7 @@ class DeviceItem:
                         ui.label("Container").classes("text-lg font-semibold mt-2")
                         with ui.column().classes("gap-2"):
                             ui.label(
-                                "Wähle aus zu welchem Container dieses Gerät gehören soll.")
+                                "Select which container this device should belong to.")
                             containers = Container.get_all()
                             container_options = {
                                 container.id: container.name for container in containers}
@@ -67,18 +67,18 @@ class DeviceItem:
                             with ui.row().classes("items-center"):
                                 self.container_select = ui.select(
                                     value=preselect_value, options=container_options, with_input=True).classes("min-w-[120px]")
-                                ui.button("Speichern", on_click=self.change_container).props(
+                                ui.button("Save", on_click=self.change_container).props(
                                     "flat")
                 
                 # Show connection string
                 with ui.row().classes("mt-4 p-4 w-full justify-between items-center bg-gray-100 !rounded-md"):
                     with ui.column().classes("w-[90%] gap-0"):
-                        ui.label("Primäre Verbindungszeichenfolge").classes("text-sm text-gray-500")
+                        ui.label("Primary Connection String").classes("text-sm text-gray-500")
 
                         connection_string = self.device.connection_string
                         connection_string_is_none = connection_string is None
                         if connection_string is None:
-                            connection_string = "Das Gerät verfügt über keine Verbindung zu einem IoT Hub"
+                            connection_string = "This device has no connection to an IoT Hub"
                         ui.label(connection_string).classes("w-full text-md font-medium overflow-x-auto")
                     copy_button = ui.button(icon="content_copy", on_click=lambda: self.copy_to_clipboard(self.device.connection_string)).classes("px-2").props("flat")
                     
@@ -90,10 +90,10 @@ class DeviceItem:
 
                 # Sensor settings
                 with ui.column().classes("pl-4 gap-4"):
-                    ui.label("Sensoren").classes("text-lg font-semibold mt-2")
+                    ui.label("Sensors").classes("text-lg font-semibold mt-2")
                     with ui.column().classes("gap-2"):
                         ui.label(
-                            "Wähle aus welche Sensoren zu diesem Gerät gehören sollen. Nur Sensoren erlaubt, die noch keinem Gerät zugewiesen wurden.")
+                            "Select which sensors should belong to this device. Only sensors that are not yet assigned to a device are allowed.")
                         sensors = Sensor.get_all_unassigned()
                         sensors.extend(self.device.sensors)
                         sensors.sort(key=lambda x: x.id)
@@ -105,13 +105,13 @@ class DeviceItem:
                         with ui.row().classes("items-center"):
                             self.sensor_select = ui.select(
                                 options=sensor_options, multiple=True, value=preselected).props('use-chips').classes("w-[130px] max-w-[350px]")
-                            ui.button("Speichern", on_click=self.change_sensors).props(
+                            ui.button("Save", on_click=self.change_sensors).props(
                                 "flat")
 
     def copy_to_clipboard(self, text):
         '''Copies the given text to the clipboard'''
         pyperclip.copy(text)
-        ui.notify("In Zwischenablage kopiert.")
+        ui.notify("Copied to clipboard.")
 
     def change_container(self):
         '''Changes the container of the device'''
@@ -130,7 +130,7 @@ class DeviceItem:
         Container.session.commit()
 
         self.container_label.text = new_container.name
-        ui.notify(f"Änderung erfolgreich gespeichert.", type="positive")
+        ui.notify(f"Changes saved successfully.", type="positive")
 
     def change_sensors(self):
         '''Changes the sensors of the device'''
@@ -143,12 +143,12 @@ class DeviceItem:
         self.device.create_relationship_to_sensors(self.sensor_select.value)
 
         self.sensor_count_label.text = f'{len(self.device.sensors)}'
-        ui.notify(f"Änderung erfolgreich gespeichert.", type="positive")
+        ui.notify(f"Changes saved successfully.", type="positive")
 
     def _check_if_container_is_active(self, container):
         '''Checks if the given container is active and shows a warning if it is'''
         if container is not None and container.is_active:
             ui.notify(
-                f"Änderung kann nicht übernommen werden während Container '{container.name}' aktiv ist.", type="warning")
+                f"Changes cannot be applied while container '{container.name}' is active.", type="warning")
             return True
         return False

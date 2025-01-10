@@ -43,30 +43,30 @@ class ContainerCard():
                             container)).props('flat').classes('px-2 text-black')
                         with ui.button(icon='more_vert').props('flat').classes('px-2 text-black'):
                             with ui.menu().props(remove='no-parent-event'):
-                                ui.menu_item('Details anzeigen', lambda: self.show_details_dialog()).classes(
+                                ui.menu_item('Show Details', lambda: self.show_details_dialog()).classes(
                                     'flex items-center')
-                                ui.menu_item('Logs anzeigen', lambda: self.show_logs_dialog(container)).classes(
+                                ui.menu_item('Show Logs', lambda: self.show_logs_dialog(container)).classes(
                                     'flex items-center')
-                                ui.menu_item('Löschen', lambda w=wrapper, c=container, callback=delete_callback: self.show_delete_dialog(
+                                ui.menu_item('Delete', lambda w=wrapper, c=container, callback=delete_callback: self.show_delete_dialog(
                                     w, c, callback)).classes('text-red-500').classes('flex items-center')
                 
                 # Container information
                 with ui.column().classes('py-4 gap-2'):
                     with ui.row().classes('gap-1'):
-                        ui.label('Geräte:').classes('text-sm font-medium')
+                        ui.label('Devices:').classes('text-sm font-medium')
                         ui.label().classes('text-sm').bind_text_from(container,
                                                                      'devices', backward=lambda d: len(d))
                     with ui.row().classes('gap-1'):
-                        ui.label('Sensoren:').classes('text-sm font-medium')
+                        ui.label('Sensors:').classes('text-sm font-medium')
                         ui.label().bind_text(self, 'sensor_count').classes('text-sm')
                     with ui.row().classes('gap-1'):
-                        ui.label('Gesendete Nachrichten:').classes(
+                        ui.label('Messages Sent:').classes(
                             'text-sm font-medium')
                         ui.label().classes('text-sm').bind_text(container, 'message_count')
                     with ui.row().classes('gap-1'):
-                        ui.label('Startzeit:').classes('text-sm font-medium')
+                        ui.label('Start time:').classes('text-sm font-medium')
                         ui.label().classes('text-sm').bind_text_from(container, 'start_time',
-                                                                     backward=lambda t: f'{t.strftime("%d.%m.%Y, %H:%M:%S")} Uhr' if t else '')
+                                                                     backward=lambda t: f'{t.strftime("%d.%m.%Y, %H:%M:%S")} UTC' if t else '')
             
             # Container controls
             with ui.card_section().classes('bg-gray-100'):
@@ -75,7 +75,7 @@ class ContainerCard():
                         self.active_dot = ui.row().classes('h-4 w-4 rounded-full' +
                                                            (' bg-green-500' if container.is_active else ' bg-red-500'))
                         ui.label().bind_text_from(container, 'is_active',
-                                                  backward=lambda is_active: f'{"Aktiv" if is_active else "Inaktiv"}')
+                                                  backward=lambda is_active: f'{"Active" if is_active else "Inactive"}')
                     with ui.row().classes('h-9 gap-0.5'):
                         with ui.row().classes('gap-0.5'):
                             ui.button(icon='play_arrow', on_click=lambda: self.show_interface_selection_dialog(container, start_callback)).props('flat').classes('px-2 text-black')
@@ -99,23 +99,23 @@ class ContainerCard():
             self.sensor_count += len(device.sensors)
 
     def show_interface_selection_dialog(self, container, start_callback):
-        '''Shows the interface selection dialog, wheather to use IoT Hub or MQTT'''
+        '''Shows the interface selection dialog, whether to use IoT Hub or MQTT'''
         with self.wrapper:
             with ui.dialog(value=True) as dialog, ui.card().classes("px-6 pb-6 overflow-auto"):
                 with ui.row().classes("w-full justify-between items-center"):
                     ui.label(
-                        "Schnittstelle auswählen").classes("text-xl font-semibold")
+                        "Select Interface").classes("text-xl font-semibold")
                     ui.button(icon="close", on_click=dialog.close).props(
                         "flat").classes("px-2 text-black")
                 
                 with ui.column():
-                    ui.label("Wähle aus über welche Schnittstelle die Daten gesendet werden sollen.")
+                    ui.label("Choose which interface to use for sending the data.")
 
                 # IoT Hub
                 with ui.row().classes("w-full justify-between items-center md:flex-nowrap md:gap-8"):
                     host_name = IoTHubHelper.get_host_name()
                     host_name_is_none = host_name is None
-                    host_name = host_name if host_name else 'Nicht Konfiguriert'
+                    host_name = host_name if host_name else 'Not Configured'
                     
                     with ui.column().classes("mt-4 gap-1"):
                         ui.label("IoT Hub").classes("text-sm font-medium")
@@ -124,7 +124,7 @@ class ContainerCard():
                     iot_hub_start_button = ui.button('Start', icon='play_arrow', on_click=lambda: self.start_handler(dialog, start_callback, container, "iothub")).classes('w-28 shrink-0')
                     
                     if host_name_is_none:
-                        iot_hub_note_label.text = "Zum Konfiguieren Umgebungsvariablen setzen (siehe README.md)"
+                        iot_hub_note_label.text = "Set environment variables to configure (see README.md)"
                         iot_hub_start_button.set_enabled(False)
                     else:
                         iot_hub_note_label.set_visibility(False)
@@ -132,7 +132,7 @@ class ContainerCard():
                 # Separator
                 with ui.row().classes("w-full items-center"):
                     ui.row().classes("h-px grow bg-gray-300")
-                    ui.label("oder").classes("text-sm font-medium")
+                    ui.label("or").classes("text-sm font-medium")
                     ui.row().classes("h-px grow bg-gray-300")
 
                 # MQTT
@@ -140,12 +140,12 @@ class ContainerCard():
                     mqtt_broker_address = MQTTHelper.get_broker_address()
                     mqtt_broker_port = MQTTHelper.get_broker_port()
 
-                    mqtt_broker_address = mqtt_broker_address if mqtt_broker_address else 'Nicht Konfiguriert'
-                    mqtt_broker_port = mqtt_broker_port if mqtt_broker_port else 'Nicht Konfiguriert'
+                    mqtt_broker_address = mqtt_broker_address if mqtt_broker_address else 'Not Configured'
+                    mqtt_broker_port = mqtt_broker_port if mqtt_broker_port else 'Not Configured'
 
                     with ui.column().classes("mt-4 gap-1"):
                         ui.label("MQTT Broker").classes("text-sm font-medium")
-                        ui.label(f"Adresse: {mqtt_broker_address}")
+                        ui.label(f"Address: {mqtt_broker_address}")
                         ui.label(f"Port: {mqtt_broker_port}")
                     mqtt_start_button = ui.button('Start', icon='play_arrow', on_click=lambda: self.start_handler(dialog, start_callback, container, "mqtt")).classes('w-28 shrink-0')
 
@@ -171,7 +171,7 @@ class ContainerCard():
                 with ui.row().classes("w-full flex justify-between"):
                     # Container information
                     with ui.column().classes("gap-4"):
-                        ui.label("Allgemein").classes(
+                        ui.label("General").classes(
                             "text-lg font-semibold mt-2")
                         with ui.row().classes("grid grid-cols-2 gap-y-4 gap-x-10 sm:flex"):
                             with ui.column().classes("gap-0"):
@@ -184,17 +184,17 @@ class ContainerCard():
                                 ui.label(f"{self.container.name}").classes(
                                     "text-md font-medium")
                             with ui.column().classes("gap-0"):
-                                ui.label("Standort").classes(
+                                ui.label("Location").classes(
                                     "text-sm text-gray-500")
                                 location = self.container.location
-                                ui.label(f"{location if location else 'k.A.'}").classes(
+                                ui.label(f"{location if location else 'N/A'}").classes(
                                     "text-md font-medium")
                         with ui.row().classes("gap-10"):
                             with ui.column().classes("gap-0"):
-                                ui.label("Beschreibung").classes(
+                                ui.label("Description").classes(
                                     "text-sm text-gray-500")
                                 description = self.container.description
-                                ui.label(f"{description if description else 'k.A.'}").classes(
+                                ui.label(f"{description if description else 'N/A'}").classes(
                                     "text-md font-medium")
                                 
                     # Container status
@@ -204,17 +204,17 @@ class ContainerCard():
                             ui.row().classes(
                                 f'h-4 w-4 rounded-full {"bg-green-500" if self.container.is_active else "bg-red-500"}')
                             ui.label().bind_text_from(self.container, 'is_active',
-                                                      backward=lambda is_active: f'{"Aktiv" if is_active else "Inaktiv"}')
+                                                      backward=lambda is_active: f'{"Active" if is_active else "Inactive"}')
 
                 # Container and sensors
                 with ui.column().classes("w-full gap-4"):
-                    ui.label("Geräte und Sensoren").classes(
+                    ui.label("Devices and Sensors").classes(
                         "text-lg font-semibold mt-2")
 
                     # Device tree
                     with ui.row().classes("gap-x-28"):
                         with ui.column().classes('gap-0'):
-                            ui.label("Ansicht").classes(
+                            ui.label("View").classes(
                                 "text-sm text-gray-500")
                             data = self.create_tree_data(
                                 self.container.devices)
@@ -229,17 +229,17 @@ class ContainerCard():
                             device_options = {
                                 device.id: device.name for device in unassigned_devices}
 
-                            ui.label("Bearbeiten").classes(
+                            ui.label("Edit").classes(
                                 "text-sm text-gray-500")
                             if len(unassigned_devices) > 0:
                                 with ui.row().classes("items-center"):
                                     self.new_device_select = ui.select(
                                         value=unassigned_devices[0].id, options=device_options).classes("min-w-[120px]")
-                                    ui.button("Hinzufügen", on_click=self.add_device_handler).props(
+                                    ui.button("Add", on_click=self.add_device_handler).props(
                                         "flat")
                             else:
                                 ui.label(
-                                    "Keine weiteren Geräte frei.").classes()
+                                    "No more devices available.").classes()
 
     def create_tree_data(self, devices):
         '''Creates the tree data for the device tree'''
@@ -255,11 +255,11 @@ class ContainerCard():
     def show_export_dialog(self):
         '''Shows the export dialog for exporting bulk data'''
         if len(self.container.devices) == 0:
-            ui.notify("Es sind keine Geräte vorhanden!", type="warning")
+            ui.notify("No devices available!", type="warning")
             return
 
         if self.container.is_active:
-            ui.notify("Bitte deaktiviere den Container, um einen Massenexport ausführen zu können.", type="warning")
+            ui.notify("Please deactivate the container to perform a bulk export.", type="warning")
             return
 
         with self.wrapper:
@@ -268,24 +268,24 @@ class ContainerCard():
                 self.bulk_export_card = card
                 with ui.row().classes("w-full justify-between items-center"):
                     ui.label(
-                        f"Massenexport - '{self.container.name}'").classes("text-xl font-semibold")
+                        f"Bulk Export - '{self.container.name}'").classes("text-xl font-semibold")
                     ui.button(icon="close", on_click=dialog.close).props(
                         "flat").classes("px-2 text-black")
                 
-                ui.label("Führe einen Massenexport aus und wähle aus, wie die Daten exportiert werden sollen.")
+                ui.label("Perform a bulk export and choose how the data should be exported.")
 
                 # Bulk data generation
                 with ui.row().classes("gap-6 items-center"):
-                    self.bulk_amount_input = ui.number(label="Werte pro Sensor", min=1, max=1000000, step=1, value=100).classes('w-24')
-                    ui.button("Daten generieren", on_click=self.generate_bulk_data).props("flat")
+                    self.bulk_amount_input = ui.number(label="Values per Sensor", min=1, max=1000000, step=1, value=100).classes('w-24')
+                    ui.button("Generate Data", on_click=self.generate_bulk_data).props("flat")
 
                 # Visualization
-                ui.label("Vorschau").classes("text-lg font-semibold mt-2")
+                ui.label("Preview").classes("text-lg font-semibold mt-2")
 
                 self.sensor_selection = SensorSelection(container=self.container, sensor_select_callback=self.update_export_preview)
                 self.chart = Chart()
 
-                self.export_button = ui.button("Exportieren", on_click=self.save_bulk_to_file).classes("mt-8 self-end")
+                self.export_button = ui.button("Export", on_click=self.save_bulk_to_file).classes("mt-8 self-end")
                 self.export_button.set_enabled(False)
 
     async def generate_bulk_data(self):
@@ -297,7 +297,7 @@ class ContainerCard():
                 bulk_export_spinner = overlay
                 ui.spinner(size='lg').classes("absolute top-1/2 left-1/2 transform -translate-x-full -translate-y-1/2")
 
-        self.chart.show_note("Generiere Daten...", force=True)
+        self.chart.show_note("Generating data...", force=True)
         await asyncio.sleep(0.1) # Workaround to make the spinner visible
 
         container_data = {}
@@ -315,7 +315,7 @@ class ContainerCard():
         if bulk_amount <= 1000:
             self.show_export_preview(container_data)
         else:
-            self.chart.show_note("Vorschau nicht verfügbar (mehr als 1.000 Werte)", force=True)
+            self.chart.show_note("Preview not available (more than 1,000 values)", force=True)
         self.export_button.set_enabled(True)
 
         bulk_export_spinner.clear()
@@ -324,7 +324,7 @@ class ContainerCard():
     def save_bulk_to_file(self):
         '''Saves the generated bulk data to a file'''
         ExportHelper().save_to_file(self.generated_container_data)
-        ui.notify(f"Daten erfolgreich exportiert", type="positive")
+        ui.notify(f"Data exported successfully", type="positive")
         self.dialog.close()
 
     def show_export_preview(self, container_data):
@@ -348,7 +348,7 @@ class ContainerCard():
         '''Adds a device to the container'''
         if self.container.is_active:
             ui.notify(
-                f"Hinzufügen nicht möglich während dieser Container aktiv ist.", type="negative")
+                f"Cannot add while this container is active.", type="negative")
             return
 
         device_id = self.new_device_select.value
@@ -356,7 +356,7 @@ class ContainerCard():
         device.container_id = self.container.id
         Device.session.commit()
 
-        ui.notify(f"Gerät erfolgreich hinzugefügt.", type="positive")
+        ui.notify(f"Device added successfully.", type="positive")
         self.update_sensor_count()
 
         # Remove device from select
@@ -373,7 +373,7 @@ class ContainerCard():
     def show_logs_dialog(self, container):
         '''Shows the logs dialog'''
         if not container.is_active:
-            ui.notify('Container ist nicht aktiv', type='warning')
+            ui.notify('Container is not active', type='warning')
             return
 
         self.logs_dialog.show()
@@ -382,8 +382,8 @@ class ContainerCard():
         '''Shows the delete dialog'''
         with wrapper:
             with ui.dialog(value=True) as dialog, ui.card().classes('items-center'):
-                ui.label('Soll der Container wirklich gelöscht werden?')
+                ui.label('Do you want to delete this container?')
                 with ui.row():
-                    ui.button('Abbrechen', on_click=dialog.close).props('flat')
-                    ui.button('Löschen', on_click=lambda: delete_callback(
+                    ui.button('Cancel', on_click=dialog.close).props('flat')
+                    ui.button('Delete', on_click=lambda: delete_callback(
                         container, dialog)).classes('text-white bg-red')

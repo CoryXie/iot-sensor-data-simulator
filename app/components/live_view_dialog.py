@@ -39,7 +39,7 @@ class LiveViewDialog():
         
         # Prepare chart
         self.chart.empty()
-        text = "Warten auf Sensordaten..." if container.is_active else "Container ist nicht aktiv"
+        text = "Waiting for sensor data..." if container.is_active else "Container is not active"
         self.chart.show_note(text)
         sensor = self.sensor_selection.get_sensor()
         self.chart.update_legend(sensor=sensor)
@@ -50,7 +50,7 @@ class LiveViewDialog():
     def sensor_select_change_handler(self, sensor):
         '''Handles the sensor select change event'''
         self.chart.empty()
-        self.chart.show_note("Warten auf Sensordaten...")
+        self.chart.show_note("Waiting for sensor data...")
         self.chart.update_legend(sensor=sensor)
         self.chart.update_visualization(sensor=sensor)
 

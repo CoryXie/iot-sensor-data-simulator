@@ -20,7 +20,7 @@ class DevicesPage:
         '''Sets up the page'''
         Navigation()
         ui.query('.nicegui-content').classes('mx-auto max-w-screen-2xl p-8')
-        ui.label("Geräte").classes('text-2xl font-bold')
+        ui.label("Devices").classes('text-2xl font-bold')
 
         self.setup_menu_bar()
         self.setup_list()
@@ -29,12 +29,12 @@ class DevicesPage:
         '''Sets up the menu bar'''
         with ui.row().classes('p-4 w-full flex items-center justify-between bg-gray-200 rounded-lg shadow-md'):
             # Create new device
-            ui.button('Neues Gerät erstellen',
+            ui.button('Create New Device',
                       on_click=lambda: self.show_create_device_dialog()).classes('')
 
             # Stats
             with ui.row().classes('gap-1'):
-                ui.label('Gesamt:').classes('text-sm font-medium')
+                ui.label('Total:').classes('text-sm font-medium')
                 ui.label().classes('text-sm').bind_text(self, 'devices_count')
 
             # Filter
@@ -51,7 +51,7 @@ class DevicesPage:
             headings = [{'name': 'ID', 'classes': 'w-[30px]'},
                         {'name': 'Name', 'classes': 'w-[130px]'},
                         {'name': 'Container', 'classes': 'w-[130px]'},
-                        {'name': 'Sensoren', 'classes': 'w-[60px]'}]
+                        {'name': 'Sensors', 'classes': 'w-[60px]'}]
 
             with ui.row().classes('px-3 py-6 flex gap-6 items-center w-full'):
                 for heading in headings:
@@ -62,7 +62,7 @@ class DevicesPage:
 
              # Print list items
             if len(self.devices) == 0:
-                self.show_note('Keine Geräte vorhanden')
+                self.show_note('No devices available')
             else:
                 for device in self.devices:
                     new_item = DeviceItem(device=device,
@@ -86,7 +86,7 @@ class DevicesPage:
             item.visible = item in results
 
         if len(results) == 0:
-            self.show_note('Keine Treffer')
+            self.show_note('No matches')
         else:
             self.hide_note()
 
@@ -96,12 +96,14 @@ class DevicesPage:
             self.list_container.classes(add='divide-y', remove='divide-y-0')
 
     def show_note(self, message):
-        '''Shows a note label with the given message'''
+        '''Show a note'''
+        self.list_container.classes(add='divide-y-0', remove='divide-y')
         self.note_label.text = message
         self.note_label.set_visibility(True)
 
     def hide_note(self):
-        '''Hides the note label'''
+        '''Hide the note'''
+        self.list_container.classes(add='divide-y', remove='divide-y-0')
         self.note_label.set_visibility(False)
 
     def update_stats(self):
@@ -115,131 +117,101 @@ class DevicesPage:
                     "flat").classes("absolute top-6 right-6 px-2 text-black z-10")
 
             with ui.stepper().props('vertical') as stepper:
-                with ui.step('Allgemein'):
-                    with ui.column():
-                        ui.label(
-                            'Gibt den Namen des Geräts an. Das Gerät kann dann mit diesem Namen im IoT Hub gefunden werden.')
-                        name_input = ui.input('Name* (Device ID)')
+                # General values
+                with ui.step('General'):
+                    ui.label('Specifies the name of the device. The device can then be found in the IoT Hub with this name.')
+                    name_input = ui.input('Name*')
                     with ui.stepper_navigation():
-                        ui.button('Abbrechen', on_click=lambda: dialog.close()).props(
-                            'flat')
-                        ui.button('Weiter', on_click=lambda: self.check_device_name_input(
-                            stepper, name_input))
-                with ui.step('Sensoren'):
+                        ui.button('Cancel', on_click=lambda: dialog.close()).props('flat')
+                        ui.button('Next', on_click=lambda: self.check_general_step_input(stepper, name_input))
+                with ui.step('Sensors'):
                     sensors = Sensor.get_all_unassigned()
-
-                    sensors_options = {
-                        sensor.id: sensor.name for sensor in sensors}
-
-                    if len(sensors) == 0:
-                        ui.label(
-                            "Es sind keine freien Sensoren verfügbar.")
+                    if len(sensors) > 0:
+                        ui.label('Select the sensors to be assigned to the device. Multiple selection possible.')
+                        sensor_options = {sensor.id: sensor.name for sensor in sensors}
+                        sensor_select = ui.select(options=sensor_options, multiple=True).classes('w-40')
                     else:
-                        ui.label(
-                            "Wähle die Sensoren aus, die dem Gerät zugeordnet werden sollen. Mehrfachauswahl möglich.")
-                    sensors_input = ui.select(sensors_options, multiple=True, label='Sensoren auswählen').props(
-                        'use-chips').classes('sm:w-64')
-
+                        ui.label('No sensors available yet. You can switch to the Sensors page, create sensors and then add them to this device.')
                     with ui.stepper_navigation():
-                        ui.button('Zurück', on_click=stepper.previous).props(
-                            'flat')
-                        ui.button('Erstellen', on_click=lambda: self.create_device(
-                            dialog, name_input, sensors_input))
+                        ui.button('Back', on_click=stepper.previous).props('flat')
+                        ui.button('Create', on_click=lambda: self.create_device(dialog, name_input, sensor_select))
 
-    def check_device_name_input(self, stepper, name_input):
-        '''Checks the device name input'''
+    def check_general_step_input(self, stepper, name_input):
+        '''Check the general step input'''
+        # Check if name is empty
         if name_input.value == '':
-            ui.notify('Bitte gib einen Namen an.',
-                      type='negative')
+            ui.notify('Please enter a name.', type='negative')
             return
+        # Check if name is already in use
         else:
-            # Check if name is already in use
-            name = self.replace_special_characters(name_input.value)
-            name_in_use = Device.check_if_name_in_use(name)
-            
+            name_in_use = Device.check_if_name_in_use(name_input.value)
             if name_in_use:
-                ui.notify('Es existiert bereits ein Container mit diesem Namen.', type='negative')
+                ui.notify('A device with this name already exists.', type='negative')
                 return
 
         stepper.next()
 
-    def create_device(self, dialog, name_input, sensors_input):
-        '''Creates a new device'''
-        dialog.close()
-        name = name_input.value
-        sensor_ids = sensors_input.value
-
+    def create_device(self, dialog, name_input, sensor_select):
+        '''Create a new device'''
         if len(self.devices) == 0:
             self.hide_note()
 
-        device_id = self.replace_special_characters(name)
+        # Read values from inputs
+        name = name_input.value
+        sensor_ids = sensor_select.value if sensor_select is not None else []
 
-        new_device = None
-        
-        # Handle case when there is no IoT Hub connection configured
-        if self.iot_hub_helper.registry_manager is None:
-            ui.notify(f"Gerät '{device_id}' erfolgreich erstellt", type="positive")
-            new_device = Device.add(sensor_ids=sensor_ids, device_name=device_id)
-        
-        # Create device in IoT Hub
-        else:
-            response = self.iot_hub_helper.create_device(device_id=device_id)
-            
-            if not response.success:
-                ui.notify(response.message, type='negative')
-                return
-            else:
-                ui.notify(response.message, type='positive')
-                new_device = Device.add(sensor_ids=sensor_ids, device_client=response.object)
+        # Create device
+        new_device = Device.add(sensor_ids=sensor_ids, device_name=name)
+        if new_device is None:
+            ui.notify("Failed to create device", type="negative")
+            return
 
-        if new_device is not None:
-            self.devices.append(new_device)
-            self.add_device_to_list(device=new_device)
-            self.update_stats()
+        self.devices.append(new_device)
 
-    def add_device_to_list(self, device):
-        '''Adds a device to the list'''
+        # Add to list
         with self.list_container:
-            new_item = DeviceItem(device=device,
-                                  delete_callback=self.delete_button_handler)
+            new_item = DeviceItem(device=new_device,
+                                delete_callback=self.delete_button_handler)
             self.list_items.append(new_item)
+
+        dialog.close()
+        ui.notify(f"Device '{name}' created successfully", type="positive")
+
+        self.update_stats()
 
     def delete_button_handler(self, device):
         '''Handles the delete button click. Opens a dialog to confirm the deletion of the device'''
         with ui.dialog(value=True) as dialog, ui.card().classes('items-center'):
-            ui.label(
-                f"Möchtest du das Gerät '{device.name}' wirklich löschen?")
+            ui.label(f"Do you want to delete the device '{device.name}'?")
             with ui.row():
-                ui.button('Abbrechen', on_click=dialog.close).props('flat')
-                ui.button('Löschen', on_click=lambda d=dialog: self.delete_handler(
+                ui.button('Cancel', on_click=dialog.close).props('flat')
+                ui.button('Delete', on_click=lambda d=dialog: self.delete_handler(
                     d, device)).classes('text-white bg-red')
 
     def delete_handler(self, dialog, device):
-        '''Handles the deletion of a device. Deletes the device from the database and the IoT Hub and updates the list'''
+        '''Handles the deletion of a device. Deletes the device from the database and updates the list'''
         dialog.close()
 
         # Check if container is active
-        if device.container_id is not None and device.container.is_active:
-            ui.notify(f"Löschen nicht möglich während Container '{device.container.name}' aktiv ist", type="warning")
+        if device.container is not None and device.container.is_active:
+            ui.notify(
+                f"Cannot delete while container '{device.container.name}' is active", type="warning")
             return
 
-        # Delete device from IoT Hub
-        self.iot_hub_helper.delete_device(
-            device_id=device.name, etag=device.etag)
         device.delete()
 
-        # Delete device from list
         index = self.devices.index(device)
+        # Increment due to headings row
         self.list_container.remove(self.list_items[index].item)
         del self.devices[index]
         del self.list_items[index]
 
         ui.notify(
-            f"Gerät '{device.name}' erfolgreich gelöscht", type="positive")
+            f"Device '{device.name}' deleted successfully", type="positive")
         self.update_stats()
 
         if len(self.devices) == 0:
-            self.show_note('Keine Geräte vorhanden')
+            self.show_note('No Devices available')
 
     def replace_special_characters(self, value):
         '''Replaces special characters not allowed in IoT Hub device names'''

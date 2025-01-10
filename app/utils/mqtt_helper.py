@@ -18,14 +18,14 @@ class MQTTHelper():
 
         # Check if broker address and port are set
         if self.broker_address is None or self.broker_port is None:
-            ui.notify("MQTT-Broker nicht konfiguriert", type="negative")
+            ui.notify("MQTT-Broker not configured", type="negative")
             return
 
         # Check if broker port is valid
         try:
             self.broker_port = int(self.broker_port)
         except ValueError:
-            ui.notify("Angegebener Port ist ungültig", type="negative")
+            ui.notify("Provided port is invalid", type="negative")
 
         # Create MQTT client
         client_id = f"container-{container_id}" if container_id else None
@@ -49,11 +49,11 @@ class MQTTHelper():
             self.client.connect(self.broker_address, self.broker_port)
             self.client.loop_start()
         except ConnectionRefusedError as e:
-            return Response(False, f"Verbindung zum MQTT-Broker verweigert")
+            return Response(False, f"Connection to MQTT broker refused")
         except Exception as e:
-            return Response(False, f"Verbindung zum MQTT-Broker fehlgeschlagen: {e}")
+            return Response(False, f"Connection to MQTT broker failed: {e}")
         else:
-            return Response(True, "Verbindung zum MQTT-Broker erfolgreich")
+            return Response(True, "Successfully connected to MQTT broker")
         
     def _on_connect(self, client, userdata, flags, rc):
         if rc == 0:
@@ -64,12 +64,12 @@ class MQTTHelper():
 
         # Check if client is connected
         if self.client is None or self.is_connected is False:
-            return Response(False, "MQTT-Client nicht verbunden")
+            return Response(False, "MQTT-Client not connected")
         
         # Prevent sending messages in demo mode
         is_demo_mode = Option.get_boolean('demo_mode')
         if is_demo_mode:
-            return Response(False, "Demo-Modus aktiviert. Nachrichten werden nicht gesendet.")
+            return Response(False, "Demo mode active. Messages will not be sent.")
         
         # Prevent manipulation of original data used in other places
         data_copy = data.copy()
@@ -89,12 +89,12 @@ class MQTTHelper():
             print(f"Sending message '{message}' to topic '{self.topic}'")
             self.client.publish(self.topic, message)
 
-        return Response(True, "Nachricht erfolgreich gesendet")
+        return Response(True, "Message sent successfully")
 
     def disconnect(self):
         '''Disconnects from the MQTT broker'''
         if self.client is None:
-            print("MQTT-Client nicht verbunden")
+            print("MQTT-Client not connected")
             return False
 
         self.client.disconnect()

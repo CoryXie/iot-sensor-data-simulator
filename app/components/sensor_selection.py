@@ -25,7 +25,7 @@ class SensorSelection:
         with ui.row().classes("mb-5") as row:
             self.row = row
             self.device_select = ui.select(device_options, value=first_device.id,
-                                           label="Gerät", on_change=self.device_select_change_handler).classes("w-32")
+                                           label="Device", on_change=self.device_select_change_handler).classes("w-32")
             first_sensor_value = first_sensor.id if first_sensor is not None else -1
             self.sensor_select = ui.select(sensor_options, value=first_sensor_value,
                                            label="Sensor", on_change=self.sensor_select_change_handler).classes("w-32")
@@ -45,7 +45,7 @@ class SensorSelection:
             self.sensor_select.value = first_value
         else:
             # No sensors available
-            self.sensor_select.options = {-1: "Leer"}
+            self.sensor_select.options = {-1: "Empty"}
             self.sensor_select.value = -1
             self.sensor_select.update()
 
