@@ -21,16 +21,17 @@ class SensorsPage():
         self.list_items = []
         self.sensor_error_card = None
         self.update_stats()
-        self.setup_page()
 
-    def setup_page(self):
-        '''Setup the page'''
-        Navigation()
-        ui.query('.nicegui-content').classes('mx-auto max-w-screen-2xl p-8')
-        ui.label("Sensors").classes('text-2xl font-bold')
-
+    def create_page(self):
+        """Create the sensors page"""
+        self.setup_layout()
         self.setup_menu_bar()
         self.setup_list()
+
+    def setup_layout(self):
+        '''Sets up Navigation and updates page title'''
+        ui.query('.nicegui-content').classes('mx-auto max-w-screen-2xl p-8')
+        ui.label("Sensors").classes('text-2xl font-bold')
 
     def setup_menu_bar(self):
         '''Setup the menu bar'''

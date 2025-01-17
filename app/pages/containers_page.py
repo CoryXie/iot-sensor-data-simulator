@@ -16,6 +16,9 @@ class ContainersPage:
         self.cards_grid = None
         self.cards = []
         self.update_stats()
+
+    def create_page(self):
+        """Create the containers page"""
         self.setup_layout()
         self.setup_menu_bar()
         self.setup_cards_grid()
@@ -23,7 +26,6 @@ class ContainersPage:
 
     def setup_layout(self):
         '''Sets up Navigation and updates page title'''
-        Navigation()
         ui.query('main').classes('h-px')
         ui.query('.nicegui-content').classes('mx-auto max-w-screen-2xl p-8')
         ui.label("Container").classes('text-2xl font-bold')
