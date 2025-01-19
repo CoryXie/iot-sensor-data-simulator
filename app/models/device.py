@@ -2,6 +2,8 @@ from sqlalchemy import Column, Integer, String, ForeignKey
 from sqlalchemy.orm import relationship
 from models.base import BaseModel
 from database import db_session
+from utils.iot_hub_helper import IoTHubHelper
+from loguru import logger
 
 class Device(BaseModel):
     """Model representing a device"""
@@ -32,3 +34,10 @@ class Device(BaseModel):
     def check_if_name_in_use(cls, name: str) -> bool:
         """Check if a device name is already in use"""
         return db_session.query(cls).filter(cls.device_name == name).first() is not None 
+
+    @classmethod
+    def get_all(cls):
+        '''Returns all devices'''
+        devices = db_session.query(cls).all()
+        logger.debug(f"Retrieved {len(devices)} devices")
+        return devices 

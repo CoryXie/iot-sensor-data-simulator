@@ -2,6 +2,9 @@ from sqlalchemy import Column, Integer, Float, String, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from models.base import BaseModel
 from database import db_session
+from utils.simulator import Simulator
+import threading
+from loguru import logger
 
 class Sensor(BaseModel):
     """Model representing a sensor"""
@@ -48,4 +51,11 @@ class Sensor(BaseModel):
     @classmethod
     def check_if_name_in_use(cls, name: str) -> bool:
         """Check if a sensor name is already in use"""
-        return db_session.query(cls).filter(cls.name == name).first() is not None 
+        return db_session.query(cls).filter(cls.name == name).first() is not None
+
+    @classmethod
+    def get_all(cls):
+        '''Returns all sensors'''
+        sensors = db_session.query(cls).all()
+        logger.debug(f"Retrieved {len(sensors)} sensors")
+        return sensors 

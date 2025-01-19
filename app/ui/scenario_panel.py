@@ -2,6 +2,7 @@ from nicegui import ui
 from typing import Dict, Callable
 from constants.device_templates import SCENARIO_TEMPLATES
 from datetime import datetime, time
+from loguru import logger
 
 class ScenarioPanel:
     """Scenario control panel component"""
@@ -9,9 +10,11 @@ class ScenarioPanel:
         self.current_scenario = "Home"
         self.on_scenario_change = on_scenario_change
         self.scheduled_scenarios = []
+        logger.debug("Initialized ScenarioPanel UI component")
 
     def create_panel(self):
         """Create the scenario control panel"""
+        logger.info("Creating scenario control panel")
         with ui.card().classes('w-full'):
             ui.label('Smart Home Control Panel').classes('text-h6')
             
@@ -24,6 +27,7 @@ class ScenarioPanel:
                 ).classes('w-48')
                 
                 def handle_scenario_change(e):
+                    logger.info(f"Changing scenario to: {e.value}")
                     self.current_scenario = e.value
                     if self.on_scenario_change:
                         self.on_scenario_change(e.value)
@@ -50,6 +54,7 @@ class ScenarioPanel:
                     
                     def handle_schedule():
                         if scenario.value and time_input.value:
+                            logger.info(f"Scheduling scenario {scenario.value} for {time_input.value}")
                             self._add_scheduled_scenario(scenario.value, time_input.value)
                     
                     ui.button('Schedule', on_click=handle_schedule)
@@ -59,9 +64,11 @@ class ScenarioPanel:
                 ui.label('Scheduled Changes').classes('text-subtitle1')
                 self.schedule_container = ui.column().classes('w-full')
                 self._update_scheduled_list()
+        logger.debug("Scenario control panel created successfully")
 
     def _update_scenario_details(self):
         """Update the scenario details display"""
+        logger.debug(f"Updating scenario details for {self.current_scenario}")
         self.details_container.clear()
         
         scenario = SCENARIO_TEMPLATES[self.current_scenario]
@@ -84,9 +91,11 @@ class ScenarioPanel:
                     ui.label('Energy:')
                     energy_factor = scenario['sensor_adjustments']['energy']['factor']
                     ui.label(f"Usage: {energy_factor * 100}%")
+        logger.debug("Scenario details updated successfully")
 
     def _add_scheduled_scenario(self, scenario_name: str, schedule_time: str):
         """Add a scheduled scenario change"""
+        logger.info(f"Adding scheduled scenario: {scenario_name} at {schedule_time}")
         try:
             # Parse the time string
             hour, minute = map(int, schedule_time.split(':'))
@@ -106,16 +115,21 @@ class ScenarioPanel:
             self._update_scheduled_list()
             
             ui.notify(f'Scheduled {scenario_name} for {schedule_time.strftime("%H:%M")}')
+            logger.info(f"Successfully scheduled {scenario_name} for {schedule_time.strftime('%H:%M')}")
         except Exception as e:
-            ui.notify(f'Error scheduling scenario: {str(e)}', type='negative')
+            error_msg = f'Error scheduling scenario: {str(e)}'
+            logger.error(error_msg)
+            ui.notify(error_msg, type='negative')
 
     def _update_scheduled_list(self):
         """Update the list of scheduled scenarios"""
+        logger.debug("Updating scheduled scenarios list")
         self.schedule_container.clear()
         
         with self.schedule_container:
             if not self.scheduled_scenarios:
                 ui.label('No scheduled changes')
+                logger.debug("No scheduled scenarios to display")
                 return
             
             for schedule in self.scheduled_scenarios:
@@ -125,6 +139,7 @@ class ScenarioPanel:
                         
                         def create_delete_handler(schedule_time):
                             def handle_delete():
+                                logger.info(f"Deleting scheduled scenario at {schedule_time.strftime('%H:%M')}")
                                 self.scheduled_scenarios = [
                                     s for s in self.scheduled_scenarios 
                                     if s['time'] != schedule_time
@@ -133,21 +148,25 @@ class ScenarioPanel:
                             return handle_delete
                         
                         ui.button(icon='delete', on_click=create_delete_handler(schedule['time']))
+            logger.debug(f"Updated list with {len(self.scheduled_scenarios)} scheduled scenarios")
 
     def process_scheduled_scenarios(self, current_time: time = None):
         """Process scheduled scenarios and trigger changes"""
         if current_time is None:
             current_time = datetime.now().time()
         
+        logger.debug(f"Processing scheduled scenarios at {current_time.strftime('%H:%M')}")
         triggered = []
         for schedule in self.scheduled_scenarios:
             if schedule['time'] <= current_time:
+                logger.info(f"Triggering scheduled scenario: {schedule['scenario']}")
                 if self.on_scenario_change:
                     self.on_scenario_change(schedule['scenario'])
                 triggered.append(schedule)
         
         # Remove triggered scenarios
         if triggered:
+            logger.info(f"Removing {len(triggered)} triggered scenarios")
             self.scheduled_scenarios = [
                 s for s in self.scheduled_scenarios 
                 if s not in triggered

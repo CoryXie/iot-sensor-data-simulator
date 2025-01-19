@@ -2,7 +2,13 @@ from typing import Optional, List
 from sqlalchemy import Column, Integer, String, Boolean, DateTime
 from sqlalchemy.orm import relationship
 from datetime import datetime
-from models.base import BaseModel, db_session
+from models.base import BaseModel
+from database import db_session
+from utils.mqtt_helper import MQTTHelper
+from utils.container_thread import ContainerThread
+from constants.units import *
+from nicegui import ui
+from loguru import logger
 
 class Container(BaseModel):
     """Container model for grouping devices"""
@@ -19,6 +25,16 @@ class Container(BaseModel):
     # Relationships
     devices = relationship("Device", back_populates="container", cascade="all, delete-orphan")
     
+    message_count = None
+    device_clients = {}
+    thread = None
+
+    def __init__(self, *args, **kwargs):
+        '''Initializes the container'''
+        super().__init__(*args, **kwargs)
+        self.thread = None
+        logger.debug(f"Initialized container: {self.name if hasattr(self, 'name') else 'unnamed'}")
+
     @classmethod
     def add(cls, name: str, description: str = None, location: str = None) -> 'Container':
         """Add a new container"""
@@ -94,4 +110,11 @@ class Container(BaseModel):
         except Exception as e:
             db_session.rollback()
             print(f"Error deleting container: {str(e)}")
-            raise 
+            raise
+
+    @classmethod
+    def get_all(cls):
+        '''Returns all containers'''
+        containers = db_session.query(cls).all()
+        logger.debug(f"Retrieved {len(containers)} containers")
+        return containers 

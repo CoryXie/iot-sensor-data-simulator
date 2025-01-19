@@ -4,6 +4,9 @@ from models.device import Device
 from models.container import Container
 from constants.device_templates import DEVICE_TEMPLATES, SCENARIO_TEMPLATES, ROOM_TYPES
 from constants.units import UNITS
+import logging
+
+logger = logging.getLogger(__name__)
 
 class SmartHomeSetup:
     """Utility class for setting up smart home scenarios"""
@@ -131,7 +134,7 @@ class SmartHomeSetup:
     def create_scenario(self, scenario_name: str) -> Container:
         """Create a new scenario with the given name"""
         if scenario_name not in SCENARIO_TEMPLATES:
-            print(f"Unknown scenario: {scenario_name}")
+            logger.error(f"Unknown scenario: {scenario_name}")
             return None
             
         scenario = SCENARIO_TEMPLATES[scenario_name]
@@ -153,55 +156,57 @@ class SmartHomeSetup:
             )
             
             if not container:
-                print(f"Failed to create container for scenario: {scenario_name}")
+                logger.error(f"Failed to create container for scenario: {scenario_name}")
                 return None
                 
+            # Check if scenario has devices defined
+            if not scenario.get('devices'):
+                logger.warning(f"No devices defined for scenario: {scenario_name}")
+                return container
+
             # Create devices for each room type
             for room_type in ROOM_TYPES:
-                if 'devices' in scenario:
-                    for device_type in scenario['devices']:
-                        if device_type in DEVICE_TEMPLATES:
-                            device_template = DEVICE_TEMPLATES[device_type]
-                            device_name = f"{room_type} - {device_type}"
+                for device_type in scenario['devices']:
+                    if device_type in DEVICE_TEMPLATES:
+                        device_template = DEVICE_TEMPLATES[device_type]
+                        device_name = f"{room_type} - {device_type}"
+                        
+                        # Create device
+                        device = Device.add(
+                            device_name=device_name,
+                            container_id=container.id
+                        )
+                        
+                        if not device:
+                            logger.error(f"Failed to create device: {device_name}")
+                            continue
                             
-                            # Create device
-                            device = Device.add(
-                                device_name=device_name,
-                                container_id=container.id
-                            )
-                            
-                            if not device:
-                                print(f"Failed to create device: {device_name}")
-                                continue
+                        # Create sensors for the device
+                        if 'sensors' in device_template:
+                            for sensor_template in device_template['sensors']:
+                                # Calculate base value as midpoint between min and max
+                                min_val = sensor_template.get('min', 0)
+                                max_val = sensor_template.get('max', 100)
+                                base_value = (min_val + max_val) / 2
                                 
-                            # Create sensors for the device
-                            if 'sensors' in device_template:
-                                for sensor_template in device_template['sensors']:
-                                    # Calculate base value as midpoint between min and max
-                                    min_val = sensor_template.get('min', 0)
-                                    max_val = sensor_template.get('max', 100)
-                                    base_value = (min_val + max_val) / 2
-                                    
-                                    sensor = Sensor.add(
-                                        name=sensor_template['name'],
-                                        device_id=device.id,
-                                        unit=sensor_template['unit'],
-                                        base_value=base_value,
-                                        variation_range=sensor_template.get('variation', 1.0),
-                                        change_rate=sensor_template.get('change_rate', 0.1),
-                                        interval=sensor_template.get('interval', 5)
-                                    )
-                                    if not sensor:
-                                        print(f"Failed to create sensor: {sensor_template['name']}")
-                        else:
-                            print(f"Unknown device type: {device_type}")
-                            
+                                sensor = Sensor.add(
+                                    name=sensor_template['name'],
+                                    device_id=device.id,
+                                    unit=sensor_template['unit'],
+                                    base_value=base_value,
+                                    variation_range=sensor_template.get('variation', 1.0),
+                                    change_rate=sensor_template.get('change_rate', 0.1),
+                                    interval=sensor_template.get('interval', 5)
+                                )
+                                if not sensor:
+                                    logger.error(f"Failed to create sensor: {sensor_template['name']}")
+                    else:
+                        logger.warning(f"Unknown device type: {device_type}")
+                        
             return container
             
         except Exception as e:
-            print(f"Error creating scenario: {str(e)}")
-            import traceback
-            print(traceback.format_exc())
+            logger.exception(f"Error creating scenario: {str(e)}")
             # If container was created but failed to add devices, clean it up
             if container:
                 container.delete()

@@ -4,6 +4,7 @@ from model.device import Device
 from constants.units import *
 from constants.sensor_errors import *
 import json
+from loguru import logger
 
 
 class SensorItem:
@@ -24,12 +25,19 @@ class SensorItem:
             self.error_definition = json.loads(sensor.error_definition) if sensor.error_definition else None
             error_type = self.error_definition["type"]
 
+        # Find the unit by ID
+        unit_info = next((unit for unit in UNITS if unit['id'] == sensor.unit), {'name': 'Unknown', 'symbol': '', 'unit_abbreviation': ''})
+        logger.debug(f"Found unit info for sensor {sensor.id}: {unit_info}")
+        
+        # Get the unit display - prefer unit_abbreviation, fallback to symbol
+        unit_display = unit_info.get('unit_abbreviation', unit_info.get('symbol', ''))
+
         with ui.row().bind_visibility(self, "visible").classes("px-3 py-4 flex justify-between items-center w-full hover:bg-gray-50") as row:
             self.item = row
             with ui.row().classes("gap-6"):
                 ui.label(f"{sensor.id}").classes("w-[30px]")
                 ui.label(f"{sensor.name}").classes("w-[130px]")
-                ui.label(f"{UNITS[sensor.unit]['name']}").classes("w-[130px]")
+                ui.label(f"{unit_info['name']}").classes("w-[130px]")
                 self.device_name_label = ui.label(sensor.device.name if sensor.device else "").classes("w-[130px]")
                 ui.label(f"{SENSOR_ERRORS_UI_MAP[error_type]}" if error_type else "").classes("w-[130px]")
             with ui.row():
@@ -41,6 +49,11 @@ class SensorItem:
 
     def show_details_dialog(self):
         '''Shows the details dialog for a sensor'''
+        # Find the unit by ID
+        unit_info = next((unit for unit in UNITS if unit['id'] == self.sensor.unit), {'name': 'Unknown', 'symbol': '', 'unit_abbreviation': ''})
+        # Get the unit display - prefer unit_abbreviation, fallback to symbol
+        unit_display = unit_info.get('unit_abbreviation', unit_info.get('symbol', ''))
+
         with ui.dialog(value=True) as dialog, ui.card().classes("px-6 pb-6 w-[696px] !max-w-none min-h-[327px]"):
             self.dialog = dialog
             with ui.row().classes("relative mb-8 w-full justify-between items-center"):
@@ -67,10 +80,10 @@ class SensorItem:
                                 ui.label(f"{self.sensor.name}").classes("text-md font-medium")
                             with ui.column().classes("gap-0"):
                                 ui.label("Typ").classes("text-sm text-gray-500")
-                                ui.label(f"{UNITS[self.sensor.unit]['name']}").classes("text-md font-medium")
+                                ui.label(f"{unit_info['name']}").classes("text-md font-medium")
                             with ui.column().classes("gap-0"):
                                 ui.label("Einheit").classes("text-sm text-gray-500")
-                                ui.label(f"{UNITS[self.sensor.unit]['unit_abbreviation']}").classes("text-md font-medium")
+                                ui.label(f"{unit_display}").classes("text-md font-medium")
 
                     ui.row().classes("mt-4 mb-2 h-px w-full bg-gray-200 border-0")
 

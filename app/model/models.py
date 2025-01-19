@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, Float, Boolean, TIMESTAMP, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
+from loguru import logger
 
 Base = declarative_base()
 

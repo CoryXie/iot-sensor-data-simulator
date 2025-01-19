@@ -1,17 +1,20 @@
 import random
 from datetime import datetime
 from typing import Dict
+from loguru import logger
 
 class SmartHomeSimulator:
     """Class to handle smart home sensor value simulation"""
     
     def __init__(self):
+        logger.info("Initializing SmartHomeSimulator")
         self.current_scenario = None
         self.scenario_start_time = None
         self.base_values = {}
         
     def set_scenario(self, scenario_name: str):
         """Set the current scenario for simulation"""
+        logger.info(f"Setting scenario to: {scenario_name}")
         self.current_scenario = scenario_name
         self.scenario_start_time = datetime.now()
         self.base_values = {}
@@ -20,6 +23,7 @@ class SmartHomeSimulator:
         """Adjust a sensor value based on the current scenario and time"""
         if sensor_type not in self.base_values:
             self.base_values[sensor_type] = base_value
+            logger.debug(f"Initialized base value for sensor type {sensor_type}: {base_value}")
             
         # Get time-based variation
         time_variation = self._get_time_variation(sensor_type)
@@ -32,6 +36,7 @@ class SmartHomeSimulator:
         
         # Combine all variations
         adjusted_value = self.base_values[sensor_type] + time_variation + scenario_variation + noise
+        logger.debug(f"Adjusted value for sensor type {sensor_type}: {adjusted_value} (base: {self.base_values[sensor_type]}, time: {time_variation}, scenario: {scenario_variation}, noise: {noise})")
         
         # Ensure the value stays within reasonable bounds
         return max(0, adjusted_value)
@@ -107,6 +112,8 @@ class SmartHomeSimulator:
         }
         
         if self.current_scenario in scenarios:
-            return scenarios[self.current_scenario].get(sensor_type, 0.0)
+            variation = scenarios[self.current_scenario].get(sensor_type, 0.0)
+            logger.debug(f"Scenario variation for {self.current_scenario}, sensor type {sensor_type}: {variation}")
+            return variation
             
         return 0.0 

@@ -2,15 +2,16 @@ from constants.sensor_errors import *
 import random
 import datetime
 import json
+from loguru import logger
 
 DRIFT_ITERATIONS = 10
 
 class Simulator:
     '''Simulates sensor data.'''
 
-
     def __init__(self, sensor):
         '''Initializes the simulator.'''
+        logger.debug(f"Initializing simulator for sensor {sensor.name} (ID: {sensor.id})")
         self.iteration = 0
         self.sensor = sensor
         self.base_value = sensor.base_value
@@ -22,7 +23,7 @@ class Simulator:
 
     def generate_bulk_data(self, amount):
         '''Generates a list of data records.'''
-
+        logger.debug(f"Generating {amount} bulk data records for sensor {self.sensor.name}")
         # Define the start time and interval
         records = []
         start_time = datetime.datetime.now()
@@ -77,6 +78,7 @@ class Simulator:
     def _handle_error_definition(self, value):
         '''Handles the error definition of a sensor.'''
         error_type = self.error_definition["type"]
+        logger.debug(f"Handling error type {error_type} for sensor {self.sensor.name}")
 
         if error_type == ANOMALY:
             return self._handle_anomaly_error(value)
@@ -95,11 +97,13 @@ class Simulator:
             # Add a random positive anomaly
             value += random.uniform(self.error_definition[POS_ANOMALY_LOWER_RANGE],
                                     self.error_definition[POS_ANOMALY_UPPER_RANGE])
+            logger.debug(f"Generated positive anomaly for sensor {self.sensor.name}: {value}")
 
         if random.random() < self.error_definition[PROBABILITY_NEG_ANOMALY]:
             # Add a random negative anomaly
             value -= random.uniform(self.error_definition[NEG_ANOMALY_LOWER_RANGE],
                                     self.error_definition[NEG_ANOMALY_UPPER_RANGE])
+            logger.debug(f"Generated negative anomaly for sensor {self.sensor.name}: {value}")
 
         return {"value": value}
 
@@ -107,6 +111,7 @@ class Simulator:
         '''Handles the MCAR error type.'''
         if random.random() < self.error_definition[PROBABILITY]:
             # Set value to None
+            logger.debug(f"Generated MCAR error for sensor {self.sensor.name}")
             return {"value": None}
         return {"value": value}
 
@@ -114,12 +119,12 @@ class Simulator:
         '''Handles the duplicate data error type.'''
         if self.iteration - self.last_duplicate > 2 and random.random() < self.error_definition[PROBABILITY]:
             self.last_duplicate = self.iteration
+            logger.debug(f"Generated duplicate data for sensor {self.sensor.name}")
             return {"value": value, "duplicate": True}
         return {"value": value}
 
     def _handle_drift_error(self, value):
         '''Handles the drift error type.'''
-        
         # Init drift after n iterations
         after_n_iterations = self.error_definition[AFTER_N_ITERATIONS]
         if self.drifting or after_n_iterations > self.iteration:
@@ -136,4 +141,5 @@ class Simulator:
             drift_change = average_drift_rate + deviation
 
             self.base_value += drift_change
+            logger.debug(f"Applied drift change to sensor {self.sensor.name}: {drift_change}")
         return {"value": value}
