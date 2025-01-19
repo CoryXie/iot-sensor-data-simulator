@@ -1,45 +1,47 @@
 from model.models import SensorModel
 from utils.simulator import Simulator
 import threading
+from models.base import db_session
 
 
 class Sensor(SensorModel):
     '''This class represents a sensor.'''
 
-    @staticmethod
-    def add(name, base_value, unit, variation_range, change_rate, interval, error_definition, device_id):
+    @classmethod
+    def add(cls, name, base_value, unit, variation_range, change_rate, interval, error_definition, device_id):
         '''Adds a new sensor to the database'''
-        new_sensor = Sensor(name=name, base_value=base_value,
-                            unit=unit, variation_range=variation_range, change_rate=change_rate, interval=interval, error_definition=error_definition, device_id=device_id)
+        new_sensor = cls(name=name, base_value=base_value,
+                        unit=unit, variation_range=variation_range, change_rate=change_rate, interval=interval, error_definition=error_definition, device_id=device_id)
 
-        Sensor.session.add(new_sensor)
-        Sensor.session.commit()
+        db_session.add(new_sensor)
+        db_session.commit()
 
         return new_sensor
 
-    @staticmethod
-    def get_all():
+    @classmethod
+    def get_all(cls):
         '''Returns all sensors'''
-        return Sensor.session.query(Sensor).all()
+        return db_session.query(cls).all()
 
-    @staticmethod
-    def get_all_by_ids(list_of_ids):
+    @classmethod
+    def get_all_by_ids(cls, list_of_ids):
         '''Returns all sensors with the given ids'''
-        return Sensor.session.query(Sensor).filter(Sensor.id.in_(list_of_ids)).all()
+        return db_session.query(cls).filter(cls.id.in_(list_of_ids)).all()
     
-    @staticmethod
-    def get_by_id(id):
+    @classmethod
+    def get_by_id(cls, id):
         '''Returns a sensor by its id'''
-        return Sensor.session.query(Sensor).filter(Sensor.id == id).first()
+        return db_session.query(cls).filter(cls.id == id).first()
 
-    @staticmethod
-    def get_all_unassigned():
+    @classmethod
+    def get_all_unassigned(cls):
         '''Returns all sensors that are not assigned to a device'''
-        return Sensor.session.query(Sensor).filter(Sensor.device_id == None).all()
+        return db_session.query(cls).filter(cls.device_id == None).all()
     
-    @staticmethod
-    def check_if_name_in_use(name):
-        return Sensor.session.query(Sensor).filter(Sensor.name.ilike(name)).first() is not None
+    @classmethod
+    def check_if_name_in_use(cls, name):
+        '''Checks if a sensor with the given name already exists'''
+        return db_session.query(cls).filter(cls.name.ilike(name)).first() is not None
     
     def start_simulation(self, callback):
         '''Starts the simulation'''
@@ -74,5 +76,5 @@ class Sensor(SensorModel):
 
     def delete(self):
         '''Deletes the sensor'''
-        Sensor.session.delete(self)
-        Sensor.session.commit()
+        db_session.delete(self)
+        db_session.commit()

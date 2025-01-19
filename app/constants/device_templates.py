@@ -1,133 +1,206 @@
-# Description: Templates for common smart home devices
-# Each template defines a set of sensors and their default configurations
+"""Device templates and room types for smart home simulation"""
 
 ROOM_TYPES = [
     "Living Room",
     "Kitchen",
     "Bedroom",
     "Bathroom",
-    "Garage",
-    "Outdoor",
-    "Basement"
+    "Office",
+    "Garage"
 ]
 
 DEVICE_TEMPLATES = {
     "Environmental Monitor": {
-        "description": "Monitors indoor environmental conditions",
+        "description": "Monitors and controls environmental conditions",
         "sensors": [
-            {"type": 0, "name": "Room Temperature", "min": 15, "max": 30},  # Temperature
-            {"type": 8, "name": "Room Humidity", "min": 30, "max": 70},     # Humidity
-            {"type": 17, "name": "CO2 Level", "min": 400, "max": 2000},     # CO2
-            {"type": 18, "name": "VOC Level", "min": 0, "max": 2000},       # VOC
-            {"type": 14, "name": "Room Light", "min": 0, "max": 1000}       # Brightness
+            {
+                "name": "Temperature",
+                "type": "Temperature",
+                "min": 15,
+                "max": 30,
+                "unit": "Temperature",
+                "variation": 0.5,
+                "change_rate": 0.1,
+                "interval": 5
+            },
+            {
+                "name": "Humidity",
+                "type": "Humidity",
+                "min": 30,
+                "max": 70,
+                "unit": "Percentage",
+                "variation": 2,
+                "change_rate": 0.5,
+                "interval": 10
+            },
+            {
+                "name": "Air Quality",
+                "type": "Air Quality",
+                "min": 0,
+                "max": 500,
+                "unit": "PPM",
+                "variation": 10,
+                "change_rate": 2,
+                "interval": 15
+            }
         ]
     },
     "Security System": {
-        "description": "Comprehensive security monitoring",
+        "description": "Monitors home security",
         "sensors": [
-            {"type": 22, "name": "Motion Sensor", "min": 0, "max": 1},      # Motion
-            {"type": 23, "name": "Door Contact", "min": 0, "max": 1},       # Contact
-            {"type": 24, "name": "Glass Break", "min": 0, "max": 1},        # Glass Break
-            {"type": 25, "name": "Smoke Detector", "min": 0, "max": 100},   # Smoke
-            {"type": 26, "name": "CO Detector", "min": 0, "max": 50}        # Carbon Monoxide
+            {
+                "name": "Motion",
+                "type": "Motion",
+                "min": 0,
+                "max": 100,
+                "unit": "Percentage",
+                "variation": 10,
+                "change_rate": 50,
+                "interval": 1
+            },
+            {
+                "name": "Door Status",
+                "type": "Status",
+                "min": 0,
+                "max": 1,
+                "unit": "Binary",
+                "variation": 1,
+                "change_rate": 1,
+                "interval": 1
+            },
+            {
+                "name": "Window Status",
+                "type": "Status",
+                "min": 0,
+                "max": 1,
+                "unit": "Binary",
+                "variation": 1,
+                "change_rate": 1,
+                "interval": 1
+            }
         ]
     },
-    "Energy Monitor": {
-        "description": "Tracks energy consumption and generation",
+    "Light Control": {
+        "description": "Controls lighting throughout the home",
         "sensors": [
-            {"type": 28, "name": "Power Usage", "min": 0, "max": 10000},    # Energy Consumption
-            {"type": 31, "name": "Solar Generation", "min": 0, "max": 5000}, # Solar Output
-            {"type": 32, "name": "Battery Status", "min": 0, "max": 100},    # Battery Level
-            {"type": 9, "name": "Grid Voltage", "min": 220, "max": 240},     # Voltage
-            {"type": 10, "name": "Current Draw", "min": 0, "max": 100}       # Current
+            {
+                "name": "Brightness",
+                "type": "Light",
+                "min": 0,
+                "max": 100,
+                "unit": "Percentage",
+                "variation": 5,
+                "change_rate": 10,
+                "interval": 1
+            },
+            {
+                "name": "Color Temperature",
+                "type": "Temperature",
+                "min": 2700,
+                "max": 6500,
+                "unit": "Kelvin",
+                "variation": 100,
+                "change_rate": 50,
+                "interval": 2
+            }
         ]
     },
-    "Climate Control": {
-        "description": "Advanced climate control system",
+    "Safety Monitor": {
+        "description": "Monitors safety conditions",
         "sensors": [
-            {"type": 0, "name": "HVAC Temperature", "min": 15, "max": 30},   # Temperature
-            {"type": 8, "name": "HVAC Humidity", "min": 30, "max": 70},      # Humidity
-            {"type": 35, "name": "Comfort Index", "min": 0, "max": 100},     # Thermal Comfort
-            {"type": 21, "name": "Air Pressure", "min": 980, "max": 1020},   # Barometric Pressure
-            {"type": 12, "name": "Fan Speed", "min": 0, "max": 3000}         # Rotation Speed
-        ]
-    },
-    "Water Monitor": {
-        "description": "Water usage and leak detection",
-        "sensors": [
-            {"type": 30, "name": "Water Usage", "min": 0, "max": 1000},      # Water Consumption
-            {"type": 2, "name": "Flow Rate", "min": 0, "max": 100},          # Flow Rate
-            {"type": 27, "name": "Leak Sensor", "min": 0, "max": 1},         # Water Leak
-            {"type": 1, "name": "Water Pressure", "min": 0, "max": 6}        # Pressure
-        ]
-    },
-    "Weather Station": {
-        "description": "Outdoor weather monitoring",
-        "sensors": [
-            {"type": 0, "name": "Outside Temperature", "min": -10, "max": 40},  # Temperature
-            {"type": 8, "name": "Outside Humidity", "min": 0, "max": 100},      # Humidity
-            {"type": 36, "name": "Rainfall", "min": 0, "max": 50},             # Rain
-            {"type": 37, "name": "Wind Speed", "min": 0, "max": 100},          # Wind Speed
-            {"type": 38, "name": "Wind Direction", "min": 0, "max": 360},      # Wind Direction
-            {"type": 20, "name": "UV Level", "min": 0, "max": 11}              # UV Index
+            {
+                "name": "Smoke Level",
+                "type": "Smoke",
+                "min": 0,
+                "max": 100,
+                "unit": "PPM",
+                "variation": 1,
+                "change_rate": 5,
+                "interval": 1
+            },
+            {
+                "name": "CO Level",
+                "type": "Gas",
+                "min": 0,
+                "max": 100,
+                "unit": "PPM",
+                "variation": 1,
+                "change_rate": 2,
+                "interval": 1
+            },
+            {
+                "name": "Water Leak",
+                "type": "Water",
+                "min": 0,
+                "max": 1,
+                "unit": "Binary",
+                "variation": 1,
+                "change_rate": 1,
+                "interval": 1
+            }
         ]
     }
 }
 
-# Simulation patterns for different times of day
-TIME_PATTERNS = {
-    "temperature": {
-        "night": {"offset": -2, "variation": 0.5},
-        "morning": {"offset": 0, "variation": 1},
-        "day": {"offset": 2, "variation": 1.5},
-        "evening": {"offset": 1, "variation": 1}
-    },
-    "occupancy": {
-        "night": {"probability": 0.9, "variation": 0.1},
-        "morning": {"probability": 0.7, "variation": 0.3},
-        "day": {"probability": 0.3, "variation": 0.2},
-        "evening": {"probability": 0.8, "variation": 0.2}
-    },
-    "energy": {
-        "night": {"factor": 0.4, "variation": 0.2},
-        "morning": {"factor": 1.2, "variation": 0.3},
-        "day": {"factor": 0.8, "variation": 0.2},
-        "evening": {"factor": 1.5, "variation": 0.4}
-    }
-}
-
-# Scenario templates for different home states
 SCENARIO_TEMPLATES = {
-    "Home": {
-        "description": "Normal occupied home state",
-        "sensor_adjustments": {
-            "temperature": {"offset": 0, "variation": 1},
-            "motion": {"probability": 0.4},
-            "energy": {"factor": 1}
-        }
+    "Morning Routine": {
+        "description": "Early morning activities with gradual light and temperature changes",
+        "devices": ["Environmental Monitor", "Light Control", "Security System"],
+        "transitions": ["Day Mode", "Away Mode", "Work From Home"]
     },
-    "Away": {
-        "description": "Home unoccupied state",
-        "sensor_adjustments": {
-            "temperature": {"offset": 2, "variation": 0.5},
-            "motion": {"probability": 0.01},
-            "energy": {"factor": 0.3}
-        }
+    "Day Mode": {
+        "description": "Optimal settings for daytime activities with balanced temperature and lighting",
+        "devices": ["Environmental Monitor", "Light Control", "Security System", "Safety Monitor"],
+        "transitions": ["Evening Mode", "Away Mode", "Work From Home"]
     },
-    "Night": {
-        "description": "Nighttime home state",
-        "sensor_adjustments": {
-            "temperature": {"offset": -1, "variation": 0.5},
-            "motion": {"probability": 0.1},
-            "energy": {"factor": 0.4}
-        }
+    "Evening Mode": {
+        "description": "Comfortable evening settings with warm lighting and relaxed temperature",
+        "devices": ["Environmental Monitor", "Light Control", "Security System", "Safety Monitor"],
+        "transitions": ["Night Mode", "Entertainment Mode", "Guest Mode"]
     },
-    "Vacation": {
-        "description": "Extended away state",
-        "sensor_adjustments": {
-            "temperature": {"offset": 3, "variation": 0.3},
-            "motion": {"probability": 0},
-            "energy": {"factor": 0.2}
-        }
+    "Night Mode": {
+        "description": "Quiet hours with minimal lighting and energy-saving temperature",
+        "devices": ["Environmental Monitor", "Light Control", "Security System"],
+        "transitions": ["Morning Routine", "Emergency Mode"]
+    },
+    "Away Mode": {
+        "description": "Energy-saving mode with enhanced security when no one is home",
+        "devices": ["Environmental Monitor", "Security System", "Safety Monitor"],
+        "transitions": ["Morning Routine", "Day Mode", "Evening Mode", "Emergency Mode"]
+    },
+    "Work From Home": {
+        "description": "Optimal settings for productivity with proper lighting and temperature",
+        "devices": ["Environmental Monitor", "Light Control", "Security System"],
+        "transitions": ["Evening Mode", "Day Mode"]
+    },
+    "Entertainment Mode": {
+        "description": "Perfect ambiance for movies or gatherings with mood lighting",
+        "devices": ["Environmental Monitor", "Light Control", "Security System"],
+        "transitions": ["Evening Mode", "Night Mode"]
+    },
+    "Guest Mode": {
+        "description": "Welcoming settings for visitors with comfortable temperature and lighting",
+        "devices": ["Environmental Monitor", "Light Control", "Security System", "Safety Monitor"],
+        "transitions": ["Evening Mode", "Night Mode"]
+    },
+    "Vacation Mode": {
+        "description": "Extended away settings with randomized lighting and strict security",
+        "devices": ["Environmental Monitor", "Light Control", "Security System", "Safety Monitor"],
+        "transitions": ["Morning Routine", "Away Mode", "Emergency Mode"]
+    },
+    "Emergency Mode": {
+        "description": "Maximum security and safety settings with emergency lighting",
+        "devices": ["Environmental Monitor", "Light Control", "Security System", "Safety Monitor"],
+        "transitions": ["Morning Routine", "Day Mode", "Away Mode"]
+    },
+    "Energy Saving": {
+        "description": "Minimum energy consumption while maintaining basic comfort",
+        "devices": ["Environmental Monitor", "Light Control", "Security System"],
+        "transitions": ["Morning Routine", "Day Mode", "Away Mode"]
+    },
+    "Party Mode": {
+        "description": "Dynamic lighting and comfortable temperature for social gatherings",
+        "devices": ["Environmental Monitor", "Light Control", "Security System"],
+        "transitions": ["Evening Mode", "Night Mode", "Entertainment Mode"]
     }
 } 

@@ -1,9 +1,10 @@
 from nicegui import ui
+from models.container import Container
+from models.device import Device
+from models.sensor import Sensor
 from components.navigation import Navigation
 from components.container_card import ContainerCard
 from components.live_view_dialog import LiveViewDialog
-from model.container import Container
-from model.device import Device
 from utils.iot_hub_helper import IoTHubHelper
 
 
@@ -12,13 +13,16 @@ class ContainersPage:
 
     def __init__(self, iot_hub_helper):
         self.iot_hub_helper = iot_hub_helper
-        self.containers = Container.get_all()
+        self.containers = []
         self.cards_grid = None
         self.cards = []
-        self.update_stats()
+        self.containers_count = 0
+        self.active_containers_count = 0
+        self.inactive_containers_count = 0
 
     def create_page(self):
         """Create the containers page"""
+        self.update_stats()  # Move database query here
         self.setup_layout()
         self.setup_menu_bar()
         self.setup_cards_grid()
@@ -57,19 +61,28 @@ class ContainersPage:
                           value=1, on_change=self.filter_handler).classes('w-24')
 
     def setup_cards_grid(self):
-        '''Sets up the cards grid'''
-        self.cards_grid = ui.grid().classes(
-            'relative mt-6 w-full grid sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4')
-        self.setup_note_label()
-
-        if len(self.containers) == 0:
-            self.show_note("No Containers available")
-        else:
-            with self.cards_grid:
-                for container in self.containers:
-                    new_container_card = ContainerCard(wrapper=self.cards_grid, container=container, start_callback=self.start_container,
-                                                       stop_callback=self.stop_container, delete_callback=self.delete_container, live_view_callback=self.show_live_view_dialog)
-                    self.cards.append(new_container_card)
+        """Setup the container cards grid"""
+        try:
+            self.cards_grid = ui.grid(columns=3).classes('gap-4 p-4')
+            
+            if not self.containers:
+                with self.cards_grid:
+                    ui.label('No containers available').classes('text-gray-500')
+                return
+            
+            for container in self.containers:
+                with self.cards_grid:
+                    card = ContainerCard(
+                        wrapper=self.cards_grid,
+                        container=container,
+                        start_callback=self.start_container,
+                        stop_callback=self.stop_container,
+                        delete_callback=self.delete_container,
+                        live_view_callback=self.show_live_view_dialog
+                    )
+                    self.cards.append(card)
+        except Exception as e:
+            print(f"Error setting up cards grid: {str(e)}")
 
     def setup_note_label(self):
         '''Sets up the note label, which is shown when no containers are available for instance'''
@@ -86,29 +99,37 @@ class ContainersPage:
             container.live_view_dialog = self.live_view_dialog
 
     def update_stats(self):
-        '''Updates the container stats'''
-        self.containers_count = len(self.containers)
-        self.active_containers_count = len(
-            list(filter(lambda c: c.is_active, self.containers)))
-        self.inactive_containers_count = self.containers_count - self.active_containers_count
+        """Update container statistics"""
+        try:
+            # Refresh containers list
+            self.containers = Container.get_all()
+            
+            # Update counts
+            self.containers_count = len(self.containers)
+            self.active_containers_count = sum(1 for c in self.containers if c.is_active)
+            self.inactive_containers_count = self.containers_count - self.active_containers_count
+        except Exception as e:
+            print(f"Error updating stats: {str(e)}")
 
-    def filter_handler(self):
-        '''Handles the filter input'''
-        search_text = self.filter_input.value
-        results = list(filter(lambda c: search_text.lower()
-                       in c.container.name.lower(), self.cards))
-        
-        if self.filter_state_select.value > 1:
-            is_active = self.filter_state_select.value == 2
-            results = [container_card for container_card in results if container_card.container.is_active == is_active]
-
-        for card in self.cards:
-            card.visible = card in results
-
-        if len(results) == 0:
-            self.show_note("No matches")
-        else:
-            self.hide_note()
+    def filter_handler(self, e=None):
+        """Handle container filtering"""
+        try:
+            filter_text = self.filter_input.value.lower() if self.filter_input.value else ""
+            filter_state = self.filter_state_select.value
+            
+            for card in self.cards:
+                if not card.card or not card.card.client:
+                    continue
+                    
+                container = card.container
+                name_match = filter_text in container.name.lower()
+                state_match = (filter_state == 1 or 
+                             (filter_state == 2 and container.is_active) or 
+                             (filter_state == 3 and not container.is_active))
+                
+                card.card.classes('hidden', remove=True) if name_match and state_match else card.card.classes('hidden', add=True)
+        except Exception as e:
+            print(f"Error handling filter: {str(e)}")
 
     def show_note(self, message):
         '''Shows the note label with the given message'''
@@ -202,53 +223,76 @@ class ContainersPage:
         new_container.live_view_dialog = self.live_view_dialog
         self.containers.append(new_container)
         with self.cards_grid:
-            new_container_card = ContainerCard(wrapper=self.cards_grid, container=new_container, start_callback=self.start_container,
-                                               stop_callback=self.stop_container, delete_callback=self.delete_container, live_view_callback=self.show_live_view_dialog)
+            new_container_card = ContainerCard(
+                wrapper=self.cards_grid,
+                container=new_container,
+                start_callback=self.start_container,
+                stop_callback=self.stop_container,
+                delete_callback=self.delete_container,
+                live_view_callback=self.show_live_view_dialog
+            )
             self.cards.append(new_container_card)
         self.update_stats()
 
     def start_container(self, container, interface):
-        '''Starts the container simulation'''
-        if len(container.devices) == 0:
-            ui.notify("No devices available!", type="warning")
-            return
+        """Start container simulation"""
+        try:
+            if not container.devices:
+                ui.notify("No devices available!", type="warning")
+                return
 
-        container.start(interface, success_callback=self.start_container_success_handler, iot_hub_helper=self.iot_hub_helper)
-
-    def start_container_success_handler(self, container):
-        '''Handles the success of the container start'''
-        index = self.containers.index(container)
-        self.cards[index].set_active()
-        self.update_stats()
+            container.start(interface)
+            
+            # Update UI
+            index = next((i for i, card in enumerate(self.cards) if card.container.id == container.id), -1)
+            if index >= 0:
+                self.cards[index].set_active()
+                self.update_stats()
+                ui.notify(f"Container {container.name} started successfully", type="positive")
+        except Exception as e:
+            ui.notify(f"Error starting container: {str(e)}", type="negative")
 
     def stop_container(self, container):
-        '''Stops the container simulation'''
-        container.stop()
-        index = self.containers.index(container)
-        self.cards[index].set_inactive()
-        self.update_stats()
+        """Stop container simulation"""
+        try:
+            container.stop()
+            
+            # Update UI
+            index = next((i for i, card in enumerate(self.cards) if card.container.id == container.id), -1)
+            if index >= 0:
+                self.cards[index].set_inactive()
+                self.update_stats()
+                ui.notify(f"Container {container.name} stopped successfully", type="positive")
+        except Exception as e:
+            ui.notify(f"Error stopping container: {str(e)}", type="negative")
 
     def delete_container(self, container, dialog):
-        '''Deletes the container'''
-        if container.is_active:
-            ui.notify(
-                'Container is active and cannot be deleted.', type='warning')
-            return
-
-        container.delete()
-
-        index = self.containers.index(container)
-        self.cards_grid.remove(self.cards[index].card)
-        del self.containers[index]
-        del self.cards[index]
-
-        ui.notify(
-            f"Container {container.name} deleted successfully", type="positive")
-        self.update_stats()
-        dialog.close()
-
-        if len(self.containers) == 0:
-            self.show_note("No Containers available")
+        """Delete a container"""
+        try:
+            # Find the index of the container card
+            index = next((i for i, card in enumerate(self.cards) if card.container.id == container.id), -1)
+            if index >= 0:
+                # Delete the container from the database
+                container.delete()
+                
+                # Delete the card UI element
+                self.cards[index].delete()
+                
+                # Remove from our list
+                self.cards.pop(index)
+                
+                # Update stats
+                self.update_stats()
+                
+                # Close dialog
+                dialog.close()
+                
+                ui.notify(f'Container {container.name} deleted successfully')
+            else:
+                ui.notify('Container not found', type='warning')
+                
+        except Exception as e:
+            ui.notify(f'Error deleting container: {str(e)}', type='negative')
 
     def show_live_view_dialog(self, container):
         '''Shows the live view dialog'''

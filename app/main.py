@@ -1,70 +1,77 @@
 from nicegui import ui
-from pages.sensors_page import SensorsPage
 from pages.containers_page import ContainersPage
 from pages.devices_page import DevicesPage
+from pages.sensors_page import SensorsPage
 from pages.smart_home_page import SmartHomePage
-from utils.mqtt_helper import MQTTHelper
 from utils.iot_hub_helper import IoTHubHelper
-from utils.init_db import init_database
-from dotenv import load_dotenv
+from database import init_db
+import socket
 
-# Load environment variables
-load_dotenv()
+# Global page instances
+pages = {}
 
-# Initialize database
-engine, session = init_database()
+def find_free_port(start_port=8080, max_tries=10):
+    """Find a free port starting from start_port"""
+    for port in range(start_port, start_port + max_tries):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(('', port))
+                return port
+            except OSError:
+                continue
+    return start_port  # Fallback to original port if no free port found
 
-# Initialize helpers
-mqtt_helper = None  # Will be initialized per container
-iot_hub_helper = IoTHubHelper()
-
-# Initialize pages
-containers_page = ContainersPage(iot_hub_helper=iot_hub_helper)
-devices_page = DevicesPage(iot_hub_helper=iot_hub_helper)
-sensors_page = SensorsPage()
-smart_home_page = SmartHomePage()
-
-@ui.page('/')
-def main_page():
-    """Main page of the application"""
-    # Add header
-    with ui.header().classes('bg-blue-800 text-white'):
-        with ui.row().classes('w-full items-center justify-between p-4'):
-            ui.label('IOT TELEMETRY SIMULATOR').classes('text-xl')
-            with ui.row().classes('items-center gap-4'):
-                ui.label('IoT Hub: Not Configured')
-                ui.switch('Demo Mode')
+def main():
+    # Initialize database
+    init_db()
     
-    with ui.tabs().classes('w-full') as tabs:
-        containers_tab = ui.tab('Containers')
-        devices_tab = ui.tab('Devices')
-        sensors_tab = ui.tab('Sensors')
-        smart_home_tab = ui.tab('Smart Home')
+    # Initialize IoT Hub Helper
+    iot_hub_helper = IoTHubHelper()
+    
+    # Create pages
+    global pages
+    pages['containers'] = ContainersPage(iot_hub_helper)
+    pages['devices'] = DevicesPage(iot_hub_helper)
+    pages['sensors'] = SensorsPage()
+    pages['smart_home'] = SmartHomePage()
+    
+    # Setup navigation
+    @ui.page('/')
+    def containers():
+        _create_header()
+        pages['containers'].create_page()
+        
+    @ui.page('/devices')
+    def devices():
+        _create_header()
+        pages['devices'].create_page()
+        
+    @ui.page('/sensors')
+    def sensors():
+        _create_header()
+        pages['sensors'].create_page()
+        
+    @ui.page('/smart-home')
+    def smart_home():
+        _create_header()
+        pages['smart_home'].create_page()
+    
+    # Find a free port
+    port = find_free_port()
+    
+    # Run the app
+    ui.run(port=port, reload=False)
 
-    with ui.tab_panels(tabs, value=containers_tab).classes('w-full'):
-        with ui.tab_panel(containers_tab):
-            containers_page.create_page()
-        with ui.tab_panel(devices_tab):
-            devices_page.create_page()
-        with ui.tab_panel(sensors_tab):
-            sensors_page.create_page()
-        with ui.tab_panel(smart_home_tab):
-            smart_home_page.create_page()
+def _create_header():
+    """Create the application header with navigation"""
+    with ui.header().classes('bg-blue-500 text-white'):
+        ui.label('IoT Sensor Data Simulator').classes('text-2xl p-4')
+        
+    with ui.row().classes('w-full bg-blue-100 p-2'):
+        ui.link('Containers', '/').classes('p-2 hover:bg-blue-200 rounded')
+        ui.link('Devices', '/devices').classes('p-2 hover:bg-blue-200 rounded')
+        ui.link('Sensors', '/sensors').classes('p-2 hover:bg-blue-200 rounded')
+        ui.link('Smart Home', '/smart-home').classes('p-2 hover:bg-blue-200 rounded')
 
-    # Add page styling
-    ui.add_head_html('''
-        <style>
-        .q-tab-panels {
-            background-color: #f5f5f5;
-        }
-        .q-tab--active {
-            color: #1976d2;
-            font-weight: bold;
-        }
-        .q-card {
-            margin-bottom: 1rem;
-        }
-        </style>
-    ''')
-
-ui.run(title='IoT Sensor Data Simulator', port=8080)
+if __name__ == '__main__':
+    main()

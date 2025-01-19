@@ -14,7 +14,6 @@ class ContainerCard():
 
     def __init__(self, wrapper, container, start_callback=None, stop_callback=None, delete_callback=None, live_view_callback=None):
         '''Initializes the container card'''
-
         self.wrapper = wrapper
         self.container = container
         self.card = None
@@ -22,81 +21,109 @@ class ContainerCard():
         self.sensor_count = 0
         self.generated_container_data = None
         self.logs_dialog = LogsDialog(wrapper)
-        container.log = self.logs_dialog.log
+        self.container.log = self.logs_dialog.log
         self.active_dot = None
-        self.setup(wrapper, container, start_callback=start_callback,
-                   stop_callback=stop_callback, delete_callback=delete_callback, live_view_callback=live_view_callback)
+        self.start_callback = start_callback
+        self.stop_callback = stop_callback
+        self.delete_callback = delete_callback
+        self.live_view_callback = live_view_callback
+        self.setup(wrapper, container)
 
-    def setup(self, wrapper, container, start_callback=None, stop_callback=None, delete_callback=None, live_view_callback=None):
+    def setup(self, wrapper, container):
         '''Sets up initial UI elements of the container card'''
-
-        self.update_sensor_count()
-
-        with ui.card().tight().bind_visibility(self, 'visible') as card:
-            self.card = card
-            with ui.card_section().classes('min-h-[260px]'):
-                # Container header
-                with ui.row().classes('pb-2 w-full justify-between items-center border-b border-gray-200'):
-                    ui.label(container.name).classes('text-xl font-semibold')
-                    with ui.row().classes('gap-0.5'):
-                        ui.button(icon='insert_chart_outlined', on_click=lambda: live_view_callback(
-                            container)).props('flat').classes('px-2 text-black')
-                        with ui.button(icon='more_vert').props('flat').classes('px-2 text-black'):
-                            with ui.menu().props(remove='no-parent-event'):
-                                ui.menu_item('Show Details', lambda: self.show_details_dialog()).classes(
-                                    'flex items-center')
-                                ui.menu_item('Show Logs', lambda: self.show_logs_dialog(container)).classes(
-                                    'flex items-center')
-                                ui.menu_item('Delete', lambda w=wrapper, c=container, callback=delete_callback: self.show_delete_dialog(
-                                    w, c, callback)).classes('text-red-500').classes('flex items-center')
-                
-                # Container information
-                with ui.column().classes('py-4 gap-2'):
-                    with ui.row().classes('gap-1'):
-                        ui.label('Devices:').classes('text-sm font-medium')
-                        ui.label().classes('text-sm').bind_text_from(container,
-                                                                     'devices', backward=lambda d: len(d))
-                    with ui.row().classes('gap-1'):
-                        ui.label('Sensors:').classes('text-sm font-medium')
-                        ui.label().bind_text(self, 'sensor_count').classes('text-sm')
-                    with ui.row().classes('gap-1'):
-                        ui.label('Messages Sent:').classes(
-                            'text-sm font-medium')
-                        ui.label().classes('text-sm').bind_text(container, 'message_count')
-                    with ui.row().classes('gap-1'):
-                        ui.label('Start time:').classes('text-sm font-medium')
-                        ui.label().classes('text-sm').bind_text_from(container, 'start_time',
-                                                                     backward=lambda t: f'{t.strftime("%d.%m.%Y, %H:%M:%S")} UTC' if t else '')
-            
-            # Container controls
-            with ui.card_section().classes('bg-gray-100'):
-                with ui.row().classes('items-center justify-between'):
-                    with ui.row().classes('gap-3 items-center'):
-                        self.active_dot = ui.row().classes('h-4 w-4 rounded-full' +
-                                                           (' bg-green-500' if container.is_active else ' bg-red-500'))
-                        ui.label().bind_text_from(container, 'is_active',
-                                                  backward=lambda is_active: f'{"Active" if is_active else "Inactive"}')
-                    with ui.row().classes('h-9 gap-0.5'):
+        try:
+            with ui.card().tight().bind_visibility(self, 'visible') as card:
+                self.card = card
+                with ui.card_section().classes('min-h-[260px]'):
+                    # Container header
+                    with ui.row().classes('pb-2 w-full justify-between items-center border-b border-gray-200'):
+                        ui.label(container.name).classes('text-xl font-semibold')
                         with ui.row().classes('gap-0.5'):
-                            ui.button(icon='play_arrow', on_click=lambda: self.show_interface_selection_dialog(container, start_callback)).props('flat').classes('px-2 text-black')
-                            ui.button(icon='pause', on_click=lambda c=container: stop_callback(
-                                c)).props('flat').classes('px-2 text-black')
-                        ui.row().classes('w-px h-full bg-gray-300')
-                        ui.button(icon='exit_to_app', on_click=lambda: self.show_export_dialog()).props('flat').classes('px-2 text-black')
+                            if self.live_view_callback:
+                                ui.button(icon='insert_chart_outlined', on_click=lambda: self.live_view_callback(
+                                    container)).props('flat').classes('px-2 text-black')
+                            with ui.button(icon='more_vert').props('flat').classes('px-2 text-black'):
+                                with ui.menu().props(remove='no-parent-event'):
+                                    ui.menu_item('Show Details', lambda: self.show_details_dialog()).classes(
+                                        'flex items-center')
+                                    ui.menu_item('Show Logs', lambda: self.show_logs_dialog(container)).classes(
+                                        'flex items-center')
+                                    ui.menu_item('Delete', lambda: self.show_delete_dialog(
+                                        wrapper, container)).classes('text-red-500').classes('flex items-center')
+
+                    # Container information
+                    with ui.column().classes('py-4 gap-2'):
+                        with ui.row().classes('gap-1'):
+                            ui.label('Devices:').classes('text-sm font-medium')
+                            ui.label().classes('text-sm').bind_text_from(container,
+                                                                         'devices', backward=lambda d: len(d))
+                        with ui.row().classes('gap-1'):
+                            ui.label('Sensors:').classes('text-sm font-medium')
+                            self.sensor_count_label = ui.label().classes('text-sm')
+                            self.sensor_count_label.bind_text(self, 'sensor_count')
+                        with ui.row().classes('gap-1'):
+                            ui.label('Messages Sent:').classes(
+                                'text-sm font-medium')
+                            ui.label().classes('text-sm').bind_text(container, 'message_count')
+                        with ui.row().classes('gap-1'):
+                            ui.label('Start time:').classes('text-sm font-medium')
+                            ui.label().classes('text-sm').bind_text_from(container, 'start_time',
+                                                                         backward=lambda t: f'{t.strftime("%d.%m.%Y, %H:%M:%S")} UTC' if t else '')
+
+                # Container controls
+                with ui.card_section().classes('bg-gray-100'):
+                    with ui.row().classes('items-center justify-between'):
+                        with ui.row().classes('gap-3 items-center'):
+                            self.active_dot = ui.row().classes('h-4 w-4 rounded-full' +
+                                                               (' bg-green-500' if container.is_active else ' bg-red-500'))
+                            self.status_label = ui.label().bind_text_from(container, 'is_active',
+                                                      backward=lambda is_active: f'{"Active" if is_active else "Inactive"}')
+                        with ui.row().classes('h-9 gap-0.5'):
+                            with ui.row().classes('gap-0.5'):
+                                if self.start_callback:
+                                    ui.button(icon='play_arrow', on_click=lambda: self.show_interface_selection_dialog(container, self.start_callback)).props('flat').classes('px-2 text-black')
+                                if self.stop_callback:
+                                    ui.button(icon='pause', on_click=lambda c=container: self.stop_callback(
+                                        c)).props('flat').classes('px-2 text-black')
+                            ui.row().classes('w-px h-full bg-gray-300')
+                            ui.button(icon='exit_to_app', on_click=lambda: self.show_export_dialog()).props('flat').classes('px-2 text-black')
+
+            self.update_sensor_count()
+        except Exception as e:
+            print(f"Error setting up container card: {str(e)}")
 
     def set_active(self):
-        '''Sets the container to active'''
-        self.active_dot.classes('bg-green-500', remove='bg-red-500')
+        """Set the container card to active state"""
+        try:
+            if not self.status_label or not self.status_label.client:
+                return
+                
+            self.status_label.text = "Active"
+            self.status_label.classes('text-green-500', remove='text-red-500')
+        except Exception as e:
+            print(f"Error setting active state: {str(e)}")
 
     def set_inactive(self):
-        '''Sets the container to inactive'''
-        self.active_dot.classes('bg-red-500', remove='bg-green-500')
+        """Set the container card to inactive state"""
+        try:
+            if not self.status_label or not self.status_label.client:
+                return
+                
+            self.status_label.text = "Inactive"
+            self.status_label.classes('text-red-500', remove='text-green-500')
+        except Exception as e:
+            print(f"Error setting inactive state: {str(e)}")
 
     def update_sensor_count(self):
-        '''Updates the sensor count'''
-        self.sensor_count = 0
-        for device in self.container.devices:
-            self.sensor_count += len(device.sensors)
+        """Update the sensor count display"""
+        try:
+            if not self.sensor_count_label or not self.sensor_count_label.client:
+                return
+                
+            total_sensors = sum(len(device.sensors) for device in self.container.devices)
+            self.sensor_count_label.text = str(total_sensors)
+        except Exception as e:
+            print(f"Error updating sensor count: {str(e)}")
 
     def show_interface_selection_dialog(self, container, start_callback):
         '''Shows the interface selection dialog, whether to use IoT Hub or MQTT'''
@@ -242,15 +269,24 @@ class ContainerCard():
                                     "No more devices available.").classes()
 
     def create_tree_data(self, devices):
-        '''Creates the tree data for the device tree'''
-        tree = []
-        for device in devices:
-            device_node = {'id': device.name, 'children': []}
-            for sensor in device.sensors:
-                sensor_node = {'id': sensor.name}
-                device_node['children'].append(sensor_node)
-            tree.append(device_node)
-        return tree
+        """Create tree data structure for devices and sensors"""
+        try:
+            tree_data = []
+            for device in devices:
+                device_node = {
+                    "id": device.name,
+                    "children": []
+                }
+                for sensor in device.sensors:
+                    sensor_node = {
+                        "id": f"{sensor.name} ({UNITS[sensor.unit]['abbreviation']})"
+                    }
+                    device_node["children"].append(sensor_node)
+                tree_data.append(device_node)
+            return tree_data
+        except Exception as e:
+            print(f"Error creating tree data: {str(e)}")
+            return []
     
     def show_export_dialog(self):
         '''Shows the export dialog for exporting bulk data'''
@@ -378,12 +414,58 @@ class ContainerCard():
 
         self.logs_dialog.show()
 
-    def show_delete_dialog(self, wrapper, container, delete_callback):
+    def show_delete_dialog(self, wrapper, container):
         '''Shows the delete dialog'''
-        with wrapper:
-            with ui.dialog(value=True) as dialog, ui.card().classes('items-center'):
-                ui.label('Do you want to delete this container?')
-                with ui.row():
-                    ui.button('Cancel', on_click=dialog.close).props('flat')
-                    ui.button('Delete', on_click=lambda: delete_callback(
-                        container, dialog)).classes('text-white bg-red')
+        try:
+            with wrapper:
+                with ui.dialog(value=True) as dialog, ui.card().classes('items-center'):
+                    ui.label('Do you want to delete this container?')
+                    with ui.row():
+                        ui.button('Cancel', on_click=dialog.close).props('flat')
+                        ui.button('Delete', on_click=lambda: self.delete_handler(
+                            dialog)).classes('text-white bg-red')
+        except Exception as e:
+            print(f"Error showing delete dialog: {str(e)}")
+
+    def delete_handler(self, dialog):
+        """Handle the deletion of the container"""
+        try:
+            # Call the delete callback if provided
+            if self.delete_callback:
+                self.delete_callback(self.container, dialog)
+                return
+                
+            # If no callback, handle deletion here
+            # Close the dialog first
+            dialog.close()
+            
+            # Stop the container if it's active
+            if self.container.is_active:
+                self.container.stop()
+            
+            # Delete the container from the database
+            self.container.delete()
+            
+            # Clean up UI elements
+            if hasattr(self, 'card') and self.card is not None:
+                try:
+                    self.card.delete()
+                except Exception as e:
+                    print(f"Error cleaning up container card UI: {str(e)}")
+                
+        except Exception as e:
+            print(f"Error deleting container card: {str(e)}")
+            ui.notify("Error deleting container", type="error")
+
+    def update_tree(self):
+        """Update the device tree"""
+        try:
+            if not self.tree_container or not self.tree_container.client:
+                return
+                
+            self.tree_container.clear()
+            with self.tree_container:
+                new_data = self.create_tree_data(self.container.devices)
+                ui.tree(new_data, label_key="id")
+        except Exception as e:
+            print(f"Error updating tree: {str(e)}")

@@ -5,6 +5,7 @@ from utils.container_thread import ContainerThread
 from constants.units import *
 from nicegui import ui
 import datetime
+from models.base import db_session
 
 
 class Container(ContainerModel):
@@ -19,15 +20,15 @@ class Container(ContainerModel):
         super().__init__(*args, **kwargs)
         self.thread = None
 
-    @staticmethod
-    def get_all():
+    @classmethod
+    def get_all(cls):
         '''Returns all containers'''
-        return Container.session.query(Container).all()
+        return db_session.query(cls).all()
     
-    @staticmethod
-    def get_by_id(id):
+    @classmethod
+    def get_by_id(cls, id):
         '''Returns a container by its id'''
-        return Container.session.query(Container).filter(Container.id == id).first()
+        return db_session.query(cls).filter(cls.id == id).first()
 
     def get_device_count(self):
         '''Returns the number of devices in the container'''
@@ -37,13 +38,13 @@ class Container(ContainerModel):
         '''Returns all devices in the container'''
         return self.devices
 
-    @staticmethod
-    def add(name, description, location, device_ids):
+    @classmethod
+    def add(cls, name, description, location, device_ids):
         '''Adds a new container to the database'''
-        container_db = Container(name=name, description=description,
-                                 location=location, is_active=False, start_time=None)
-        Container.session.add(container_db)
-        Container.session.commit()
+        container_db = cls(name=name, description=description,
+                         location=location, is_active=False, start_time=None)
+        db_session.add(container_db)
+        db_session.commit()
         container_db.create_relationship_to_devices(device_ids)
         return container_db
     

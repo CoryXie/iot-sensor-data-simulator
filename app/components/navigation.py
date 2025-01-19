@@ -16,7 +16,7 @@ class Navigation():
         with ui.header(elevated=True).style('background-color: #3874c8').classes(' z-50'):
             with ui.row().classes('mx-auto w-screen max-w-screen-2xl justify-between lg:px-8 lg:items-center'):
                 # Title
-                ui.label("IoT Telemetry Simulator").classes(
+                ui.label("SmartHome Sensors Simulator").classes(
                     'text-md font-semibold uppercase')
                 # Navigation list
                 with ui.row().classes('mx-auto gap-6 order-2 sm:order-[0] lg:mx-0 lg:gap-12'):

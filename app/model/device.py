@@ -1,32 +1,34 @@
 from model.models import DeviceModel
 from model.sensor import Sensor
 from utils.iot_hub_helper import IoTHubHelper
+from models.base import db_session
 
 
 class Device(DeviceModel):
     '''This class represents a device. A device is a collection of sensors.'''
 
-    @staticmethod
-    def get_all():
+    @classmethod
+    def get_all(cls):
         '''Returns all devices'''
-        return Device.session.query(Device).all()
+        return db_session.query(cls).all()
 
-    @staticmethod
-    def get_all_by_ids(ids):
+    @classmethod
+    def get_all_by_ids(cls, ids):
         '''Returns all devices with the given ids'''
-        return Device.session.query(Device).filter(Device.id.in_(ids)).all()
+        return db_session.query(cls).filter(cls.id.in_(ids)).all()
     
-    def get_by_id(id):
+    @classmethod
+    def get_by_id(cls, id):
         '''Returns a device by its id'''
-        return Device.session.query(Device).filter_by(id=id).first()
+        return db_session.query(cls).filter_by(id=id).first()
     
-    @staticmethod
-    def get_all_unassigned():
+    @classmethod
+    def get_all_unassigned(cls):
         '''Returns all devices that are not assigned to a container'''
-        return Device.session.query(Device).filter(Device.container_id == None).all()
+        return db_session.query(cls).filter(cls.container_id == None).all()
 
-    @staticmethod
-    def add(sensor_ids, **kwargs):
+    @classmethod
+    def add(cls, sensor_ids, **kwargs):
         '''Adds a new device to the database'''
         device_client = kwargs.get("device_client") # Usually only set when connected to IoT Hub
         device_name = kwargs.get("device_name") # Usually set when not connected to IoT Hub
@@ -40,27 +42,24 @@ class Device(DeviceModel):
             connection_string = f"HostName={host_name}.azure-devices.net;DeviceId={device_client.device_id};SharedAccessKey={primary_key}"
 
             # Create device in database
-            device_db = Device(name=device_client.device_id, generation_id=device_client.generation_id,
-                            etag=device_client.etag, status=device_client.status, connection_string=connection_string)
+            device_db = cls(name=device_client.device_id, generation_id=device_client.generation_id,
+                          etag=device_client.etag, status=device_client.status, connection_string=connection_string)
         elif device_name:
             # Create device in database
-            device_db = Device(name=device_name)
+            device_db = cls(name=device_name)
 
         if device_db is not None:
             # Add device to database
-            Device.session.add(device_db)
-            Device.session.commit()
-
+            db_session.add(device_db)
+            db_session.commit()
             device_db.create_relationship_to_sensors(sensor_ids)
-
             return device_db
-        
         return None
     
-    @staticmethod
-    def check_if_name_in_use(name):
+    @classmethod
+    def check_if_name_in_use(cls, name):
         '''Checks if a device with the given name already exists'''
-        return Device.session.query(Device).filter(Device.name.ilike(name)).first() is not None
+        return db_session.query(cls).filter(cls.name.ilike(name)).first() is not None
 
     def create_relationship_to_sensors(self, sensor_ids):
         '''Creates a relationship between the device and the given sensors'''
@@ -100,5 +99,5 @@ class Device(DeviceModel):
 
     def delete(self):
         '''Deletes the device'''
-        Device.session.delete(self)
-        Device.session.commit()
+        db_session.delete(self)
+        db_session.commit()

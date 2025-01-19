@@ -1,11 +1,10 @@
 from nicegui import ui
-from components.navigation import Navigation
-from components.sensor_item import SensorItem
-from model.device import Device
-from model.sensor import Sensor
-from constants.units import *
+from models.device import Device
+from models.sensor import Sensor
+from constants.units import UNITS
 from constants.sensor_errors import *
 from components.sensor_error_cards import AnomalyCard, MCARCard, DuplicateDataCard, DriftCard
+from components.sensor_item import SensorItem
 
 DEFAULT_BASE_VALUE = 25.00
 DEFAULT_VARIATION_RANGE = 5.00
@@ -17,13 +16,14 @@ class SensorsPage():
 
     def __init__(self):
         '''Initializes the page'''
-        self.sensors = Sensor.get_all()
+        self.sensors = []
         self.list_items = []
         self.sensor_error_card = None
-        self.update_stats()
+        self.sensors_count = 0
 
     def create_page(self):
         """Create the sensors page"""
+        self.update_stats()  # Move database query here
         self.setup_layout()
         self.setup_menu_bar()
         self.setup_list()
@@ -118,6 +118,7 @@ class SensorsPage():
 
     def update_stats(self):
         '''Update the stats'''
+        self.sensors = Sensor.get_all()  # Get all sensors from database
         self.sensors_count = len(self.sensors)
 
     def show_create_sensor_dialog(self):
