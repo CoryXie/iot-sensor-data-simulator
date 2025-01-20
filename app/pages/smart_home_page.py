@@ -174,20 +174,6 @@ class SmartHomePage:
             # Update the scenario panel
             self.scenario_panel._update_scenario(scenario_name)
             
-            # Refresh all pages
-            from main import pages
-            
-            # Refresh each page
-            if 'containers' in pages:
-                pages['containers'].update_stats()
-                pages['containers'].setup_cards_grid()
-            if 'devices' in pages:
-                pages['devices'].refresh_device_list()
-                pages['devices'].update_stats()
-            if 'sensors' in pages:
-                pages['sensors'].update_stats()
-                pages['sensors'].setup_list()
-            
             logger.info(f"Successfully activated scenario: {scenario_name}")
             ui.notify(f'Activated {scenario_name} scenario', type='positive')
         except Exception as e:
