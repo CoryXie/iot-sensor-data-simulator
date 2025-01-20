@@ -33,3 +33,31 @@ SENSOR_ERRORS_UI_MAP = {
     AVERAGE_DRIFT_RATE: "Mittlere Driftrate",
     VARIATION_RANGE: "Variationsbereich"
 }
+
+# English version of the UI map for sensor errors
+SENSOR_ERRORS_UI_MAP_EN = {
+    "type": "Type",
+    ANOMALY: "Anomaly",
+    MCAR: "Missing Completely at Random (MCAR)",
+    DUPLICATE_DATA: "Duplicate Data",
+    DRIFT: "Drift",
+    PROBABILITY_POS_ANOMALY: "Positive Anomaly Probability",
+    PROBABILITY_NEG_ANOMALY: "Negative Anomaly Probability",
+    POS_ANOMALY_UPPER_RANGE: "Positive Anomaly Upper Range",
+    POS_ANOMALY_LOWER_RANGE: "Positive Anomaly Lower Range",
+    NEG_ANOMALY_UPPER_RANGE: "Negative Anomaly Upper Range",
+    NEG_ANOMALY_LOWER_RANGE: "Negative Anomaly Lower Range",
+    PROBABILITY: "Probability",
+    AFTER_N_ITERATIONS: "After N Iterations",
+    AVERAGE_DRIFT_RATE: "Average Drift Rate",
+    VARIATION_RANGE: "Variation Range"
+}
+
+# User-friendly error messages for alerts
+ERROR_MESSAGES = {
+    ANOMALY: "Anomaly detected in sensor readings",
+    MCAR: "Missing data point in sensor readings",
+    DUPLICATE_DATA: "Duplicate data detected in sensor readings",
+    DRIFT: "Sensor drift detected - readings may be inaccurate",
+    NO_ERROR: "Normal operation"
+}

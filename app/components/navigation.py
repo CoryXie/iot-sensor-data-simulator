@@ -1,6 +1,7 @@
 from nicegui import ui
-from model.option import Option
+from models.option import Option
 from utils.iot_hub_helper import IoTHubHelper
+from loguru import logger
 
 
 class Navigation():
@@ -9,6 +10,8 @@ class Navigation():
     def __init__(self):
         '''Initializes the navigation bar'''
         self.host_name = IoTHubHelper.get_host_name()
+        self.tabs = None
+        logger.debug("Initialized Navigation component")
         self.setup()
 
     def setup(self):
@@ -29,20 +32,34 @@ class Navigation():
                     host_name = self.host_name if self.host_name else 'Not Configured'
                     self.host_name_label = ui.label(f'IoT Hub: {host_name}').classes('text-white')
                     
-                    # Demo mode switch
-                    demo_switch = ui.switch('Demo Mode', on_change=self.demo_switch_handler).classes('text-white')
-                    with demo_switch:
-                        ui.tooltip('When enabled, no messages will be sent to IoT Hub or MQTT broker.')
-                    demo_switch.value = Option.get_boolean('demo_mode')
-                    ui.query('.q-toggle__inner--falsy').classes('!text-white/50')
+                    # Demo mode switch with error handling
+                    try:
+                        demo_switch = ui.switch('Demo Mode', on_change=self.demo_switch_handler).classes('text-white')
+                        with demo_switch:
+                            ui.tooltip('When enabled, no messages will be sent to IoT Hub or MQTT broker.')
+                        demo_switch.value = Option.get_boolean('demo_mode')
+                        ui.query('.q-toggle__inner--falsy').classes('!text-white/50')
+                    except Exception as e:
+                        logger.error(f"Error setting up demo switch: {str(e)}")
+                        demo_switch = ui.switch('Demo Mode', value=False).classes('text-white disabled')
 
     def demo_switch_handler(self, switch):
         '''Handles the switch change event of the demo mode switch'''
-        Option.set_value('demo_mode', switch.value)
-        
-        if switch.value:
-            ui.query('.q-toggle__inner--truthy').classes('!text-white')
-            ui.query('.q-toggle__inner--falsy').classes(remove='!text-white/50')
-        else:
-            ui.query('.q-toggle__inner--falsy').classes('!text-white/50')
-            ui.query('.q-toggle__inner--truthy').classes(remove='!text-white')
+        try:
+            Option.set_value('demo_mode', str(switch.value).lower())
+            if switch.value:
+                ui.query('.q-toggle__inner--truthy').classes('!text-white')
+                ui.query('.q-toggle__inner--falsy').classes(remove='!text-white/50')
+            else:
+                ui.query('.q-toggle__inner--falsy').classes('!text-white/50')
+                ui.query('.q-toggle__inner--truthy').classes(remove='!text-white')
+        except Exception as e:
+            logger.error(f"Error handling demo switch change: {str(e)}")
+
+    def create_navigation(self):
+        """Create the navigation tabs"""
+        with ui.tabs().classes('w-full') as self.tabs:
+            ui.tab('Smart Home', icon='home')
+            ui.tab('Containers', icon='inventory_2')
+            ui.tab('Devices', icon='devices')
+            ui.tab('Sensors', icon='sensors')

@@ -10,6 +10,7 @@ class FloorPlan:
         self.rooms: Dict[str, Dict] = {}
         self.alerts = []
         self.main_container = None
+        self.sensor_states = {}  # Store sensor states
         logger.debug("Initialized FloorPlan UI component")
         
     def create_floor_plan(self):
@@ -40,7 +41,8 @@ class FloorPlan:
                 'card': card,
                 'device_container': device_container,
                 'alert_container': alert_container,
-                'devices': []
+                'devices': [],
+                'ui_initialized': False
             }
         logger.debug(f"Room card created for {room_type}")
 
@@ -68,23 +70,68 @@ class FloorPlan:
         room = self.rooms[room_type]
         device_container = room['device_container']
         
-        # Clear existing devices
-        device_container.clear()
-        
-        # Add devices and their sensors
+        try:
+            # Create or update UI elements
+            device_container.clear()  # Always clear and rebuild
+            
+            # Add devices and their sensors
+            for device in devices:
+                with device_container:
+                    with ui.expansion(device['name'], icon='devices').classes('w-full'):
+                        with ui.column().classes('w-full'):
+                            for sensor in device['sensors']:
+                                sensor_key = f"{room_type}_{device['name']}_{sensor['name']}"
+                                
+                                # Create or update sensor state
+                                if sensor_key not in self.sensor_states:
+                                    self.sensor_states[sensor_key] = ui.state({
+                                        'current': sensor['current_value'],
+                                        'base': sensor['base_value'],
+                                        'unit': sensor['unit']
+                                    })
+                                else:
+                                    self.sensor_states[sensor_key].current = sensor['current_value']
+                                    self.sensor_states[sensor_key].unit = sensor['unit']
+                                
+                                with ui.row().classes('w-full justify-between items-center'):
+                                    # Left side: sensor name and icon
+                                    with ui.row().classes('items-center gap-2'):
+                                        ui.icon(self._get_sensor_icon(sensor['name'])).classes('text-primary')
+                                        ui.label(f"{sensor['name']}:").classes('font-bold')
+                                    
+                                    # Right side: current value and unit
+                                    with ui.row().classes('items-center gap-2'):
+                                        ui.label().bind_text(
+                                            self.sensor_states[sensor_key], 
+                                            'current',
+                                            lambda x: f"{x:.1f}"
+                                        ).classes('text-lg font-bold text-primary')
+                                        ui.label().bind_text(
+                                            self.sensor_states[sensor_key], 
+                                            'unit'
+                                        ).classes('text-sm text-gray-600')
+                                    
+                                    # Base value
+                                    ui.label().bind_text(
+                                        self.sensor_states[sensor_key],
+                                        'base',
+                                        lambda x: f"(Base: {x:.1f})"
+                                    ).classes('text-xs text-gray-500')
+            
+            # Force update of the device container
+            device_container.update()
+            
+        except Exception as e:
+            logger.error(f"Error updating room data: {str(e)}")
+            logger.exception(e)
+
+    def _get_values_hash(self, devices: list) -> str:
+        """Create a hash of current values to detect changes"""
+        values = []
         for device in devices:
-            logger.debug(f"Adding device {device['name']} to {room_type}")
-            with device_container:
-                with ui.expansion(device['name'], icon='devices').classes('w-full'):
-                    with ui.column().classes('w-full'):
-                        for sensor in device['sensors']:
-                            logger.debug(f"Adding sensor {sensor['name']} to device {device['name']}")
-                            with ui.row().classes('w-full justify-between items-center'):
-                                ui.label(f"{sensor['name']}:").classes('text-bold')
-                                with ui.column().classes('text-right'):
-                                    ui.label(f"Base: {sensor['base_value']:.1f} {sensor['unit']}").classes('text-sm')
-                                    ui.label(f"Current: {sensor['current_value']:.1f} {sensor['unit']}").classes('text-sm text-primary')
-        logger.debug(f"Room data update completed for {room_type}")
+            for sensor in device['sensors']:
+                values.append(f"{sensor['name']}:{sensor['current_value']}")
+        return "|".join(values)
 
     def _get_sensor_icon(self, sensor_name: str) -> str:
         """Get the appropriate icon for a sensor type"""

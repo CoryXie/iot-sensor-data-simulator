@@ -126,13 +126,19 @@ class ScenarioPanel:
         except Exception as e:
             logger.exception(f"Error updating scenario details: {str(e)}")
     
-    def _update_scenario(self, scenario_name: str):
-        """Update the current scenario"""
-        logger.info(f"Updating current scenario to: {scenario_name}")
-        self.current_scenario = scenario_name
-        self._update_scenario_details()
-        if self.on_scenario_change:
-            self.on_scenario_change(scenario_name)
+    async def _update_scenario(self, scenario_name: str):
+        """Update the scenario display"""
+        try:
+            if self.scenario_name_label and self.scenario_name_label.client:
+                with self.scenario_name_label:
+                    self.scenario_name_label.clear()
+                    self.scenario_name_label.text = scenario_name or 'No active scenario'
+            
+            if self.on_scenario_change:
+                await self.on_scenario_change(scenario_name)
+            
+        except Exception as e:
+            logger.exception(f"Error updating scenario: {str(e)}")
     
     def _update_scheduled_list(self):
         """Update the list of scheduled scenarios"""

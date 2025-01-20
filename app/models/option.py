@@ -1,55 +1,62 @@
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, Boolean
 from models.base import BaseModel
 from database import db_session
 from loguru import logger
 
 class Option(BaseModel):
-    """Model representing a global option/setting"""
+    """Model for storing application options"""
     __tablename__ = 'options'
-    
+
     id = Column(Integer, primary_key=True)
-    name = Column(String(255), unique=True, nullable=False)
-    value = Column(String(255))
-    
+    name = Column(String(50), unique=True)
+    value = Column(String(200))
+
+    @classmethod
+    def init(cls):
+        """Initialize default options"""
+        try:
+            # Set default options if they don't exist
+            defaults = {
+                'demo_mode': 'false'
+            }
+            
+            for name, value in defaults.items():
+                if not cls.get_value(name):
+                    option = cls(name=name, value=value)
+                    option.save()
+                    logger.debug(f"Created default option: {name}={value}")
+                    
+        except Exception as e:
+            logger.error(f"Error initializing options: {str(e)}")
+
     @classmethod
     def get_value(cls, name: str) -> str:
-        """Get the value of an option by name"""
+        """Get option value by name"""
         try:
-            option = db_session.query(cls).filter(cls.name == name).first()
-            value = option.value if option else None
-            logger.debug(f"Retrieved value for option '{name}': {value}")
-            return value
+            option = db_session.query(cls).filter_by(name=name).first()
+            return option.value if option else None
         except Exception as e:
-            logger.error(f"Error getting value for option '{name}': {str(e)}")
+            logger.error(f"Error getting option value: {str(e)}")
             return None
-    
-    @classmethod
-    def set_value(cls, name: str, value: str) -> bool:
-        """Set the value of an option, creating it if it doesn't exist"""
-        try:
-            option = db_session.query(cls).filter(cls.name == name).first()
-            if option:
-                option.value = value
-                logger.debug(f"Updated existing option '{name}' to: {value}")
-            else:
-                option = cls(name=name, value=value)
-                db_session.add(option)
-                logger.debug(f"Created new option '{name}' with value: {value}")
-            
-            db_session.commit()
-            return True
-        except Exception as e:
-            db_session.rollback()
-            logger.error(f"Error setting option '{name}': {str(e)}")
-            return False
-    
+
     @classmethod
     def get_boolean(cls, name: str) -> bool:
-        """Get a boolean option value"""
+        """Get boolean option value"""
         value = cls.get_value(name)
-        result = value == "1" if value is not None else False
-        logger.debug(f"Retrieved boolean value for option '{name}': {result}")
-        return result
+        return value.lower() == 'true' if value else False
+
+    @classmethod
+    def set_value(cls, name: str, value: str):
+        """Set option value"""
+        try:
+            option = db_session.query(cls).filter_by(name=name).first()
+            if option:
+                option.value = str(value)
+            else:
+                option = cls(name=name, value=str(value))
+            option.save()
+        except Exception as e:
+            logger.error(f"Error setting option value: {str(e)}")
     
     @classmethod
     def delete(cls, name: str) -> bool:

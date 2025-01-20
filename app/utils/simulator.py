@@ -11,10 +11,13 @@ class Simulator:
 
     def __init__(self, sensor):
         '''Initializes the simulator.'''
-        logger.debug(f"Initializing simulator for sensor {sensor.name} (ID: {sensor.id})")
-        self.iteration = 0
         self.sensor = sensor
         self.base_value = sensor.base_value
+        self.variation_range = sensor.variation_range
+        self.change_rate = sensor.change_rate
+        self.last_value = self.base_value
+        logger.debug(f"Initializing simulator for sensor {sensor.name} (ID: {sensor.id})")
+        self.iteration = 0
         self.previous_value = sensor.base_value
         self.last_duplicate = -1  # Used to prevent more than one duplicate in a row
         self.drifting = False
@@ -48,32 +51,46 @@ class Simulator:
 
     def generate_data(self, **kwargs):
         '''Generates a single data record.'''
-        iso_format = kwargs.get("iso_format", False)
-        timestamp = kwargs.get("timestamp", None)
+        try:
+            # Calculate new value based on last value and parameters
+            max_change = self.variation_range * self.change_rate
+            random_change = random.uniform(-max_change, max_change)
+            
+            # Ensure value stays within variation range
+            new_value = self.last_value + random_change
+            min_value = self.base_value - self.variation_range
+            max_value = self.base_value + self.variation_range
+            
+            # Clamp value to valid range
+            new_value = max(min_value, min(new_value, max_value))
+            self.last_value = new_value
+            
+            logger.debug(f"Generated value {new_value:.2f} for sensor {self.sensor.name}")
 
-        value_change = random.uniform(-self.sensor.change_rate, self.sensor.change_rate)
-        value = self.previous_value + value_change
+            send_duplicate = False
+            if self.error_definition:
+                result = self._handle_error_definition(new_value)
+                new_value = result["value"]
+                send_duplicate = result.get("duplicate", False)
 
-        value = max(self.base_value - self.sensor.variation_range,
-                    min(self.base_value + self.sensor.variation_range, value))
-        self.previous_value = value
+            # Check if None. Errors might change the value to None
+            if new_value is not None:
+                new_value = round(new_value, 2)
+            self.iteration += 1
+            if kwargs.get("timestamp") is None:
+                timestamp = datetime.datetime.now().isoformat()
+            else:
+                timestamp = kwargs.get("timestamp")
 
-        send_duplicate = False
-        if self.error_definition:
-            result = self._handle_error_definition(value)
-            value = result["value"]
-            send_duplicate = result.get("duplicate", False)
-
-        # Check if None. Errors might change the value to None
-        if value is not None:
-            value = round(value, 2)
-        self.iteration += 1
-        if timestamp is None:
-            timestamp = datetime.datetime.now().isoformat(
-            ) if iso_format else datetime.datetime.now()
-
-        # Return the data record with typical characteristics of an IoT sensor
-        return {"timestamp": timestamp, "sensorId": self.sensor.id, "sensorName": self.sensor.name, "value": value, "unit": self.sensor.unit, "deviceId": self.sensor.device_id, "deviceName": self.sensor.device.name, "sendDuplicate": send_duplicate}
+            # Return the data record with typical characteristics of an IoT sensor
+            return {"timestamp": timestamp, "sensorId": self.sensor.id, "sensorName": self.sensor.name, "value": new_value, "unit": self.sensor.unit, "deviceId": self.sensor.device_id, "deviceName": self.sensor.device.name, "sendDuplicate": send_duplicate}
+            
+        except Exception as e:
+            logger.error(f"Error generating data for sensor {self.sensor.name}: {str(e)}")
+            return {
+                'value': self.base_value,
+                'timestamp': datetime.datetime.now().isoformat()
+            }
 
     def _handle_error_definition(self, value):
         '''Handles the error definition of a sensor.'''

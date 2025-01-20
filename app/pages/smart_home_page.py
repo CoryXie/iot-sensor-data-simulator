@@ -9,6 +9,7 @@ from models.device import Device
 from models.sensor import Sensor
 from utils.simulator import Simulator
 from constants.device_templates import DEVICE_TEMPLATES, ROOM_TYPES, SCENARIO_TEMPLATES
+from constants.sensor_errors import SENSOR_ERRORS_UI_MAP_EN, ERROR_MESSAGES
 from loguru import logger
 import asyncio
 import json
@@ -30,10 +31,16 @@ class SmartHomePage:
         self.alert_container = None
         self.active_scenario_id = None
         self.sensor_simulators = {}  # Store simulators by sensor ID
+        self.update_timer = None  # Store reference to timer
+        self.main_container = None  # Store reference to main container
 
     def create_page(self):
         """Create the smart home page"""
-        with ui.column().classes('w-full gap-4'):
+        # Cancel existing timer if any
+        if self.update_timer:
+            self.update_timer.active = False
+            
+        with ui.column().classes('w-full gap-4') as self.main_container:
             # Header with current status
             with ui.card().classes('w-full p-4'):
                 ui.label('Smart Home Control').classes('text-2xl font-bold')
@@ -65,8 +72,86 @@ class SmartHomePage:
                         ui.label('Scenario Schedule').classes('text-xl font-bold mb-4')
                         self.scenario_panel.create_panel()
 
-        # Start update timer
-        ui.timer(5.0, self._update_smart_home)
+            # Initialize active scenarios first
+            self._restore_active_scenario()
+
+            # Create single timer for updates
+            self.update_timer = ui.timer(5.0, self._update_smart_home)
+            self.update_timer.active = True
+
+        # Force initial update of setups list
+        self._update_setups_list()
+
+    def _restore_active_scenario(self):
+        """Restore previously active scenario after app restart"""
+        try:
+            # Find active container
+            active_container = Container.query.filter_by(is_active=True)\
+                .filter(Container.name.like('Smart Home - %'))\
+                .first()
+            
+            if active_container:
+                logger.info(f"Found active scenario: {active_container.name}")
+                scenario_name = active_container.name.replace('Smart Home - ', '')
+                
+                # Set active scenario ID
+                self.active_scenario_id = active_container.id
+                
+                # Start the container
+                active_container.start(None)
+                
+                # Clear any existing floor plan data to force re-initialization
+                for room_type in ROOM_TYPES:
+                    if room_type in self.floor_plan.rooms:
+                        room = self.floor_plan.rooms[room_type]
+                        room['ui_initialized'] = False
+                        if room['device_container']:
+                            room['device_container'].clear()
+                
+                # Clear existing simulators and reinitialize
+                self.sensor_simulators.clear()
+                
+                # Initialize simulators for all sensors
+                for device in active_container.devices:
+                    for sensor in device.sensors:
+                        try:
+                            simulator = Simulator(sensor=sensor)
+                            self.sensor_simulators[sensor.id] = simulator
+                            logger.info(f"Created simulator for sensor: {sensor.name} (ID: {sensor.id})")
+                        except Exception as e:
+                            logger.error(f"Error initializing simulator for sensor {sensor.name}: {str(e)}")
+                
+                # Update scenario panel
+                self.scenario_panel._update_scenario(scenario_name)
+                
+                # Force a complete UI refresh
+                self._update_setups_list()
+                
+                # Force an immediate update of the floor plan with binding initialization
+                self._update_smart_home()
+                
+                logger.info(f"Successfully restored scenario: {scenario_name}")
+                ui.notify(f'Restored {scenario_name} scenario', type='positive')
+                
+                # Ensure update timer is running
+                if not self.update_timer or not self.update_timer.active:
+                    self.update_timer = ui.timer(5.0, self._update_smart_home)
+                    self.update_timer.active = True
+                    logger.info("Started update timer")
+                
+                # Force a second update after a short delay to ensure bindings are active
+                async def delayed_update():
+                    await asyncio.sleep(1)
+                    self._update_smart_home()
+                
+                asyncio.create_task(delayed_update())
+                
+            else:
+                logger.info("No active scenario found to restore")
+                
+        except Exception as e:
+            logger.exception(f"Error restoring active scenario: {str(e)}")
+            ui.notify(f'Error restoring active scenario: {str(e)}', type='warning')
 
     def _activate_scenario(self, scenario_name: str):
         """Activate a specific scenario"""
@@ -111,25 +196,24 @@ class SmartHomePage:
 
     def _update_smart_home(self):
         """Update the smart home display"""
+        if not self.main_container or not self.main_container.client:
+            logger.debug("Main container not available, skipping update")
+            return True
+            
         logger.debug("Updating smart home display")
         try:
             # Process any scheduled scenarios
             self.scenario_panel.process_scheduled_scenarios()
-            logger.debug("Processed scheduled scenarios")
             
-            # Update alerts
-            self._update_alerts()
-            logger.debug("Updated alerts")
-            
-            # Update floor plan
+            # Update floor plan if there's an active scenario
             if self.active_scenario_id:
                 container = Container.get_by_id(self.active_scenario_id)
                 if container:
-                    logger.debug(f"Updating floor plan for container: {container.name}")
+                    logger.info(f"Updating floor plan for container: {container.name}")
                     # Group devices by room
                     room_devices = {}
                     for device in container.devices:
-                        # Extract room name from device name (e.g., "Living Room - Environmental Monitor")
+                        # Extract room name from device name
                         room_name = None
                         for room_type in ROOM_TYPES:
                             if device.name.startswith(room_type):
@@ -145,63 +229,64 @@ class SmartHomePage:
                                 'name': device.name.split(' - ')[1],  # Get device type
                                 'sensors': []
                             }
-                            logger.debug(f"Processing device: {device_data['name']} in {room_name}")
                             
-                            # Add sensor data
+                            # Add sensor data with real-time values
                             for sensor in device.sensors:
                                 try:
-                                    # Get or create simulator for this sensor
                                     simulator = self.sensor_simulators.get(sensor.id)
-                                    if simulator is None:
-                                        simulator = Simulator(sensor=sensor)
-                                        self.sensor_simulators[sensor.id] = simulator
-                                        logger.debug(f"Created new simulator for sensor: {sensor.name}")
-                                    
-                                    # Generate new data
-                                    current_data = simulator.generate_data()
-                                    
-                                    # Extract current value, falling back to base value if needed
-                                    current_value = current_data.get('value', sensor.base_value)
-                                    if current_value is None:
+                                    if simulator:
+                                        generated_data = simulator.generate_data()
+                                        current_value = generated_data.get('value', sensor.base_value)
+                                        logger.debug(f"Generated value for {sensor.name}: {current_value}")
+                                    else:
                                         current_value = sensor.base_value
-                                        logger.warning(f"Using base value for sensor {sensor.name} due to missing current value")
+                                        logger.warning(f"No simulator for {sensor.name}, using base: {current_value}")
                                     
-                                    # Update sensor data
+                                    unit = self._get_unit_display(sensor.unit)
                                     sensor_data = {
                                         'name': sensor.name,
                                         'base_value': sensor.base_value,
                                         'current_value': current_value,
-                                        'unit': sensor.unit
+                                        'unit': unit
                                     }
                                     device_data['sensors'].append(sensor_data)
-                                    logger.debug(f"Updated sensor data for {sensor.name}: current={current_value}, base={sensor.base_value}")
                                     
-                                    # Process any events based on the new value
+                                    # Process events based on new value
                                     self.event_system.process_sensor_update(sensor.unit, current_value, room_name)
                                     
                                 except Exception as e:
                                     logger.error(f"Error processing sensor {sensor.name}: {str(e)}")
-                                    # Use base value as fallback
-                                    sensor_data = {
-                                        'name': sensor.name,
-                                        'base_value': sensor.base_value,
-                                        'current_value': sensor.base_value,
-                                        'unit': sensor.unit
-                                    }
-                                    device_data['sensors'].append(sensor_data)
-                                    logger.warning(f"Using fallback values for sensor {sensor.name}")
+                                    continue
                             
                             room_devices[room_name].append(device_data)
                     
                     # Update each room in the floor plan
                     for room_name, devices in room_devices.items():
                         self.floor_plan.update_room_data(room_name, devices)
-                        logger.debug(f"Updated floor plan for room {room_name} with {len(devices)} devices")
-            
-            return True  # Keep the timer running
+                
+                return True
+            return True
         except Exception as e:
             logger.exception(f"Error updating smart home: {str(e)}")
-            return True  # Keep the timer running even if there's an error
+            return True
+
+    def _get_unit_display(self, unit_code: int) -> str:
+        """Get the display string for a unit code"""
+        unit_map = {
+            0: '°C',  # Temperature
+            1: '%',   # Humidity
+            2: 'lux', # Light level
+            3: 'ppm', # Air quality
+            4: '%',   # Brightness
+            5: '',    # Status (0-1)
+            6: 'dB',  # Sound level
+            7: 'ppm', # CO2
+            8: '%',   # Motion
+        }
+        # Return empty string if unit_code is None
+        if unit_code is None:
+            return ''
+        return unit_map.get(unit_code, '')
 
     def _setup_default_events(self):
         """Setup default smart home events"""
@@ -231,7 +316,7 @@ class SmartHomePage:
         )
         self.event_system.add_event(temp_comfort)
 
-    def _handle_scenario_change(self, scenario_name: str):
+    async def _handle_scenario_change(self, scenario_name: str):
         """Handle scenario changes"""
         try:
             logger.info(f"Handling scenario change to: {scenario_name}")
@@ -251,8 +336,9 @@ class SmartHomePage:
                 for room_type in ROOM_TYPES:
                     if room_type in self.floor_plan.rooms:
                         device_container = self.floor_plan.rooms[room_type]['device_container']
-                        if device_container:
-                            device_container.clear()
+                        if device_container and device_container.client:
+                            with device_container:
+                                device_container.clear()
             
             # Then set up new scenario if one is provided
             if scenario_name:
@@ -284,17 +370,14 @@ class SmartHomePage:
                     # Force an immediate update of the floor plan
                     self._update_smart_home()
                     logger.info(f"Successfully switched to scenario: {scenario_name}")
-                    ui.notify(f'Switched to {scenario_name} scenario')
                 else:
                     logger.error(f"Failed to create/activate scenario: {scenario_name}")
-                    ui.notify(f'Failed to create/activate scenario: {scenario_name}', type='error')
             else:
                 logger.info("Scenario stopped")
-                ui.notify('Scenario stopped')
                 
         except Exception as e:
             logger.exception(f"Error in scenario change: {str(e)}")
-            ui.notify(f'Error changing scenario: {str(e)}', type='error')
+            # Let the caller handle any UI notifications
 
     def _handle_motion_trigger(self):
         """Handle motion trigger events"""
@@ -339,10 +422,16 @@ class SmartHomePage:
                     for device in container.devices:
                         for sensor in device.sensors:
                             if sensor.error_definition:
+                                error_def = json.loads(sensor.error_definition)
+                                error_type = error_def.get('type', 'unknown')
                                 alerts.append({
                                     'device': device.name,
                                     'sensor': sensor.name,
-                                    'error': sensor.error_definition
+                                    'error_type': error_type,
+                                    'error_message': ERROR_MESSAGES.get(error_type, "Unknown error detected"),
+                                    'details': {k: SENSOR_ERRORS_UI_MAP_EN.get(k, k) + f": {v}" 
+                                              for k, v in error_def.items() 
+                                              if k != 'type'}
                                 })
 
             # Display alerts
@@ -351,10 +440,20 @@ class SmartHomePage:
                     ui.label('No active alerts').classes('text-gray-500')
                 else:
                     for alert in alerts:
-                        with ui.card().classes('w-full p-4 bg-red-50'):
-                            ui.label(f"{alert['device']} - {alert['sensor']}").classes('font-bold text-red-600')
-                            error_def = json.loads(alert['error'])
-                            ui.label(f"Error: {SENSOR_ERRORS_UI_MAP[error_def['type']]}").classes('text-sm text-red-600')
+                        with ui.card().classes('w-full p-4 bg-red-50 mb-2'):
+                            # Alert header
+                            with ui.row().classes('items-center gap-2'):
+                                ui.icon('warning').classes('text-red-500')
+                                ui.label(f"{alert['device']} - {alert['sensor']}").classes('font-bold text-red-600')
+                            
+                            # Main error message
+                            ui.label(alert['error_message']).classes('text-sm text-red-600 mt-2')
+                            
+                            # Error details in an expansion panel
+                            if alert['details']:
+                                with ui.expansion('Details', icon='info').classes('w-full mt-2'):
+                                    for detail in alert['details'].values():
+                                        ui.label(detail).classes('text-sm text-red-500')
 
         except Exception as e:
             logger.exception(f"Error updating alerts: {str(e)}")
@@ -365,30 +464,64 @@ class SmartHomePage:
             except:
                 pass
 
-    def _start_scenario(self, container_id: int):
-        """Start a scenario setup"""
+    def _stop_scenario(self, container_id: int):
+        """Stop a running scenario"""
         try:
+            logger.info(f"Stopping scenario with container ID: {container_id}")
             container = Container.get_by_id(container_id)
             if container:
-                logger.info(f"Starting scenario: {container.name}")
-                # Get scenario name from container name
-                scenario_name = container.name.replace('Smart Home - ', '')
+                # Stop the container
+                container.stop()
                 
-                # First clean up any existing scenario
-                if self.active_scenario_id:
-                    old_container = Container.get_by_id(self.active_scenario_id)
-                    if old_container:
-                        old_container.stop()
-                    self.simulator.set_scenario(None)
+                # Clear active scenario ID if it's the current one
+                if self.active_scenario_id == container_id:
                     self.active_scenario_id = None
-                    self.sensor_simulators.clear()
+                    
+                # Clear simulators for this container's sensors
+                for device in container.devices:
+                    for sensor in device.sensors:
+                        if sensor.id in self.sensor_simulators:
+                            del self.sensor_simulators[sensor.id]
                 
-                # Set up the new scenario
-                self.simulator.set_scenario(scenario_name)
-                self.active_scenario_id = container.id
+                # Clear floor plan data and force refresh
+                for room_type in ROOM_TYPES:
+                    if room_type in self.floor_plan.rooms:
+                        room = self.floor_plan.rooms[room_type]
+                        room['ui_initialized'] = False
+                        if room['device_container']:
+                            room['device_container'].clear()
+                
+                # Clear scenario panel
+                self.scenario_panel._update_scenario(None)
+                
+                # Force refresh of setups list
+                self._update_setups_list()
+                
+                # Force an immediate update of the floor plan
+                self._update_smart_home()
+                
+                logger.info(f"Successfully stopped scenario: {container.name}")
+                ui.notify(f'Stopped {container.name}', type='warning')
+            else:
+                logger.warning(f"Container {container_id} not found")
+                
+        except Exception as e:
+            logger.exception(f"Error stopping scenario: {str(e)}")
+            ui.notify(f'Error stopping scenario: {str(e)}', type='negative')
+
+    def _start_scenario(self, container_id: int):
+        """Start a scenario"""
+        try:
+            logger.info(f"Starting scenario with container ID: {container_id}")
+            container = Container.get_by_id(container_id)
+            if container:
+                # Stop any currently active scenario
+                if self.active_scenario_id and self.active_scenario_id != container_id:
+                    self._stop_scenario(self.active_scenario_id)
                 
                 # Start the container
-                container.start(None)  # Pass None for interface to use default
+                container.start(None)
+                self.active_scenario_id = container_id
                 
                 # Initialize simulators for all sensors
                 for device in container.devices:
@@ -398,51 +531,24 @@ class SmartHomePage:
                             self.sensor_simulators[sensor.id] = simulator
                             logger.debug(f"Created simulator for sensor: {sensor.name} (ID: {sensor.id})")
                 
+                # Update scenario panel
+                scenario_name = container.name.replace('Smart Home - ', '')
+                self.scenario_panel._update_scenario(scenario_name)
+                
+                # Force refresh of setups list
+                self._update_setups_list()
+                
                 # Force an immediate update of the floor plan
                 self._update_smart_home()
                 
                 logger.info(f"Successfully started scenario: {container.name}")
-                ui.notify(f'Started scenario: {container.name}', type='positive')
-                self._update_setups_list()
+                ui.notify(f'Started {container.name}', type='success')
+            else:
+                logger.warning(f"Container {container_id} not found")
                 
         except Exception as e:
             logger.exception(f"Error starting scenario: {str(e)}")
             ui.notify(f'Error starting scenario: {str(e)}', type='negative')
-
-    def _stop_scenario(self, container_id: int):
-        """Stop a scenario setup"""
-        try:
-            container = Container.get_by_id(container_id)
-            if container:
-                logger.info(f"Stopping scenario: {container.name}")
-                # Stop the container
-                container.stop()
-                
-                # Clear scenario from simulator
-                if container_id == self.active_scenario_id:
-                    self.simulator.set_scenario(None)
-                    self.active_scenario_id = None
-                    
-                    # Clear all sensor simulators
-                    self.sensor_simulators.clear()
-                    logger.debug("Cleared all sensor simulators")
-                    
-                    # Clear all room displays in floor plan
-                    for room_type in ROOM_TYPES:
-                        if room_type in self.floor_plan.rooms:
-                            device_container = self.floor_plan.rooms[room_type]['device_container']
-                            if device_container and device_container.client:
-                                with device_container:
-                                    device_container.clear()
-                                logger.debug(f"Cleared room display for: {room_type}")
-                
-                logger.info(f"Successfully stopped scenario: {container.name}")
-                ui.notify(f'Stopped scenario: {container.name}', type='positive')
-                self._update_setups_list()
-                
-        except Exception as e:
-            logger.exception(f"Error stopping scenario: {str(e)}")
-            ui.notify(f'Error stopping scenario: {str(e)}', type='negative')
 
     def _delete_scenario(self, container_id: int):
         """Delete a scenario setup"""
@@ -497,11 +603,53 @@ class SmartHomePage:
                             with ui.row().classes('gap-2'):
                                 if scenario['id']:  # If scenario is created
                                     if not scenario['is_active']:
-                                        ui.button('Start', on_click=lambda s=scenario: self._start_scenario(s['id'])).classes('bg-green-500 text-white')
+                                        ui.button('Start', 
+                                                on_click=lambda s=scenario: self._handle_scenario_action(
+                                                    lambda: self._start_scenario(s['id'])))\
+                                            .classes('bg-green-500 text-white')\
+                                            .props('no-caps')
                                     else:
-                                        ui.button('Stop', on_click=lambda s=scenario: self._stop_scenario(s['id'])).classes('bg-red-500 text-white')
-                                    ui.button('Delete', on_click=lambda s=scenario: self._delete_scenario(s['id'])).classes('bg-gray-500 text-white')
+                                        ui.button('Stop', 
+                                                on_click=lambda s=scenario: self._handle_scenario_action(
+                                                    lambda: self._stop_scenario(s['id'])))\
+                                            .classes('bg-red-500 text-white')\
+                                            .props('no-caps')
+                                    ui.button('Delete', 
+                                            on_click=lambda s=scenario: self._handle_scenario_action(
+                                                lambda: self._delete_scenario(s['id'])))\
+                                        .classes('bg-gray-500 text-white')\
+                                        .props('no-caps')
                                 else:  # If scenario is not created yet
-                                    ui.button('Create', on_click=lambda n=scenario['name']: self._activate_scenario(n)).classes('bg-blue-500 text-white')
+                                    ui.button('Create', 
+                                            on_click=lambda n=scenario['name']: self._handle_scenario_action(
+                                                lambda: self._activate_scenario(n)))\
+                                        .classes('bg-blue-500 text-white')\
+                                        .props('no-caps')
+            
+            # Force update of the container
+            if self.setups_container.client:
+                self.setups_container.update()
+            
         except Exception as e:
-            logger.exception(f"Error updating setups list: {str(e)}") 
+            logger.exception(f"Error updating setups list: {str(e)}")
+
+    def _handle_scenario_action(self, action):
+        """Handle scenario action and refresh UI"""
+        try:
+            # Execute the action (start/stop/delete/create)
+            action()
+            
+            # Force a client-side page refresh
+            ui.run_javascript('window.location.reload();')
+            
+        except Exception as e:
+            logger.exception(f"Error handling scenario action: {str(e)}")
+            ui.notify(f'Error: {str(e)}', type='negative')
+
+    def cleanup(self):
+        """Cleanup resources when page is closed"""
+        if self.update_timer:
+            self.update_timer.active = False
+        for simulator in self.sensor_simulators.values():
+            if hasattr(simulator, 'stop'):
+                simulator.stop() 

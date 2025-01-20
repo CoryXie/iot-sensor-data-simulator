@@ -8,7 +8,13 @@ class FloorPlan:
     """Class to handle floor plan visualization and room updates"""
     
     def __init__(self):
-        self.rooms = {room_type: {} for room_type in ROOM_TYPES}
+        self.rooms = {}
+        self.sensor_values = {}  # Store sensor values
+        for room_type in ROOM_TYPES:
+            self.rooms[room_type] = {
+                'ui_initialized': False,
+                'device_container': None
+            }
         self.main_container = None
         logger.debug("Initialized FloorPlan utility component")
         
@@ -38,6 +44,12 @@ class FloorPlan:
             self.rooms[room_type]['alert_container'] = ui.column().classes('w-full mt-2')
         logger.debug(f"Room card created for {room_type}")
     
+    def update_sensor_value(self, room_type: str, device_name: str, sensor_name: str, current_value: float):
+        """Update a specific sensor's value"""
+        sensor_key = f"{room_type}_{device_name}_{sensor_name}"
+        if sensor_key in self.sensor_values:
+            self.sensor_values[sensor_key]['value_label'].text = f"{current_value:.1f}"
+            
     def update_room_data(self, room_type: str, devices: list):
         """Update the room data with new device information"""
         if room_type not in self.rooms:
@@ -50,6 +62,21 @@ class FloorPlan:
             logger.warning(f"Device container not found for room {room_type}")
             return
             
+        # Only clear and rebuild if values have changed
+        current_hash = self._get_values_hash(devices)
+        if hasattr(self, f'last_hash_{room_type}') and getattr(self, f'last_hash_{room_type}') == current_hash:
+            # Just update the values without rebuilding UI
+            for device in devices:
+                for sensor in device['sensors']:
+                    self.update_sensor_value(
+                        room_type, 
+                        device['name'], 
+                        sensor['name'], 
+                        sensor['current_value']
+                    )
+            return
+            
+        setattr(self, f'last_hash_{room_type}', current_hash)
         device_container.clear()
         
         # Create expandable sections for each device
@@ -61,39 +88,55 @@ class FloorPlan:
                         # Display each sensor's data
                         for sensor in device['sensors']:
                             logger.debug(f"Adding sensor {sensor['name']} to device {device['name']}")
+                            
                             with ui.card().classes('w-full p-1 bg-gray-50'):
                                 with ui.row().classes('w-full justify-between items-center'):
-                                    # Sensor name and values in a single row
-                                    with ui.row().classes('gap-4 items-center flex-grow'):
-                                        ui.label(f"{sensor['name']}:").classes('font-bold min-w-[120px]')
-                                        # Base value with icon
-                                        with ui.row().classes('items-center gap-1'):
-                                            ui.icon('radio_button_unchecked', size='16px').classes('text-gray-600')
-                                            ui.label(f"{sensor['base_value']:.1f}").classes('text-gray-600')
-                                        # Current value with icon
-                                        with ui.row().classes('items-center gap-1'):
-                                            ui.icon('radio_button_checked', size='16px').classes('text-primary')
-                                            ui.label(f"{sensor['current_value']:.1f}").classes('text-primary font-bold')
-                                    # Unit display
-                                    ui.label(self._get_unit_display(sensor['unit'])).classes('text-gray-500 min-w-[30px] text-right')
-        logger.debug(f"Room data update completed for {room_type}")
+                                    # Left side: sensor name and icon
+                                    with ui.row().classes('items-center gap-2'):
+                                        ui.icon(self._get_sensor_icon(sensor['name'])).classes('text-primary')
+                                        ui.label(f"{sensor['name']}:").classes('font-bold')
+                                    
+                                    # Right side: current value and unit
+                                    with ui.row().classes('items-center gap-2'):
+                                        # Create labels for values
+                                        value_label = ui.label(f"{sensor['current_value']:.1f}").classes('text-lg font-bold text-primary')
+                                        unit_label = ui.label(f"{sensor['unit']}").classes('text-sm text-gray-600')
+                                        base_label = ui.label(f"(Base: {sensor['base_value']:.1f})").classes('text-xs text-gray-500')
+                                        
+                                        # Store references to labels
+                                        sensor_key = f"{room_type}_{device['name']}_{sensor['name']}"
+                                        self.sensor_values[sensor_key] = {
+                                            'value_label': value_label,
+                                            'unit_label': unit_label,
+                                            'base_label': base_label
+                                        }
 
-    def _get_unit_display(self, unit_code: int) -> str:
-        """Get the display string for a unit code"""
-        unit_map = {
-            0: '°C',  # Temperature
-            1: '%',   # Humidity
-            2: 'lux', # Light level
-            3: 'ppm', # Air quality
-            4: '%',   # Brightness
-            5: '',    # Status (0-1)
-            6: 'dB',  # Sound level
-            7: 'ppm', # CO2
-            8: '%',   # Motion
+    def _get_values_hash(self, devices: list) -> str:
+        """Create a hash of current values to detect changes"""
+        values = []
+        for device in devices:
+            for sensor in device['sensors']:
+                values.append(f"{sensor['name']}:{sensor['current_value']}")
+        return "|".join(values)
+
+    def _get_sensor_icon(self, sensor_name: str) -> str:
+        """Get the appropriate icon for a sensor type"""
+        icons = {
+            'Temperature': 'thermostat',
+            'Humidity': 'water_drop',
+            'Air Quality': 'air',
+            'Motion': 'motion_sensors',
+            'Door Status': 'door_front',
+            'Window Status': 'window',
+            'Brightness': 'light_mode',
+            'Color Temperature': 'palette',
+            'Smoke Level': 'smoke_detector',
+            'CO Level': 'co2',
+            'Water Leak': 'water_damage'
         }
-        unit = unit_map.get(unit_code, '')
-        logger.debug(f"Retrieved unit display '{unit}' for unit code {unit_code}")
-        return unit
+        icon = icons.get(sensor_name, 'sensors')
+        logger.debug(f"Retrieved icon '{icon}' for sensor {sensor_name}")
+        return icon
     
     def add_alert(self, room_type: str, message: str, severity: str = 'warning'):
         """Add an alert to a room"""

@@ -7,63 +7,54 @@ from database import init_db, db_session
 from utils.iot_hub_helper import IoTHubHelper
 from loguru import logger
 import os
+from models.container import Container
+from components.navigation import Navigation
 
 # Configure logging
 os.makedirs('logs', exist_ok=True)
 logger.add("logs/app.log", rotation="500 MB", level="INFO")
 
-# Global variables
-pages = None
-iot_hub_helper = None
-
 def init():
     """Initialize the application"""
-    global pages, iot_hub_helper
-    
-    logger.info("Initializing application")
     try:
-        # Initialize database
+        logger.info("Initializing application")
+        
+        # Initialize database and stop all scenarios
         init_db()
+        Container.stop_all()
         
         # Initialize IoT Hub helper
-        iot_hub_helper = IoTHubHelper()
+        iot_hub = IoTHubHelper()
         logger.info("IoT Hub helper initialized")
         
-        # Initialize pages dictionary
-        pages = {}
+        # Create pages
+        smart_home_page = SmartHomePage()
+        containers_page = ContainersPage(iot_hub)
+        devices_page = DevicesPage(iot_hub)
+        sensors_page = SensorsPage()
         
-        # Initialize pages
-        pages['containers'] = ContainersPage(iot_hub_helper)
-        pages['devices'] = DevicesPage(iot_hub_helper)
-        pages['sensors'] = SensorsPage()
-        pages['smart_home'] = SmartHomePage()
+        # Create navigation
+        navigation = Navigation()
         
+        # Create routes
+        @ui.page('/')
+        def home():
+            navigation.create_navigation()
+            with ui.tab_panels(navigation.tabs, value='Smart Home').classes('w-full'):
+                with ui.tab_panel('Smart Home'):
+                    smart_home_page.create_page()
+                with ui.tab_panel('Containers'):
+                    containers_page.create_page()
+                with ui.tab_panel('Devices'):
+                    devices_page.create_page()
+                with ui.tab_panel('Sensors'):
+                    sensors_page.create_page()
+            
         logger.info("Application initialized successfully")
-    except Exception as e:
-        logger.exception(f"Error initializing application: {str(e)}")
-        raise
-
-@ui.page('/')
-def home():
-    """Home page"""
-    if pages is None:
-        init()
         
-    with ui.tabs().classes('w-full') as tabs:
-        ui.tab('Smart Home', icon='home')
-        ui.tab('Containers', icon='inventory_2')
-        ui.tab('Devices', icon='devices')
-        ui.tab('Sensors', icon='sensors')
-    
-    with ui.tab_panels(tabs, value='Smart Home').classes('w-full'):
-        with ui.tab_panel('Smart Home'):
-            pages['smart_home'].create_page()
-        with ui.tab_panel('Containers'):
-            pages['containers'].create_page()
-        with ui.tab_panel('Devices'):
-            pages['devices'].create_page()
-        with ui.tab_panel('Sensors'):
-            pages['sensors'].create_page()
+    except Exception as e:
+        logger.error(f"Error initializing application: {str(e)}")
+        raise
 
 if __name__ in {"__main__", "__mp_main__"}:
     init()

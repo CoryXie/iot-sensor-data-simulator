@@ -3,7 +3,7 @@ from sqlalchemy import Column, Integer, String, Boolean, DateTime
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from models.base import BaseModel
-from database import db_session
+from database import db_session, Session
 from utils.mqtt_helper import MQTTHelper
 from utils.container_thread import ContainerThread
 from constants.units import *
@@ -21,6 +21,7 @@ class Container(BaseModel):
     is_active = Column(Boolean, default=False)
     message_count = Column(Integer, default=0)
     start_time = Column(DateTime)
+    status = Column(String(50), default='stopped')
     
     # Relationships
     devices = relationship("Device", back_populates="container", cascade="all, delete-orphan")
@@ -75,10 +76,31 @@ class Container(BaseModel):
         """Stop the container"""
         try:
             self.is_active = False
+            self.status = 'stopped'
             self.start_time = None
             self.save()
+            logger.info(f"Container {self.name} stopped")
         except Exception as e:
-            print(f"Error stopping container: {str(e)}")
+            logger.error(f"Error stopping container {self.name}: {str(e)}")
+            raise
+
+    @classmethod
+    def stop_all(cls):
+        """Stop all active containers"""
+        try:
+            active_containers = db_session.query(cls).filter_by(is_active=True).all()
+            for container in active_containers:
+                container.is_active = False
+                try:
+                    container.status = 'stopped'
+                except:
+                    # Handle case where status column might not exist yet
+                    pass
+            db_session.commit()
+            logger.info("All containers stopped")
+        except Exception as e:
+            logger.error(f"Error stopping all containers: {str(e)}")
+            db_session.rollback()
             raise
 
     def increment_message_count(self):
