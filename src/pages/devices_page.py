@@ -3,14 +3,16 @@ from src.models.device import Device
 from src.models.sensor import Sensor
 from src.components.device_item import DeviceItem
 from src.models.device import Device
+from loguru import logger
 
 
 class DevicesPage:
     '''This class represents the devices page.'''
 
-    def __init__(self, iot_hub_helper):
+    def __init__(self, iot_hub_helper=None):
         '''Initializes the page'''
         self.iot_hub_helper = iot_hub_helper
+        logger.info("Initializing DevicesPage")
         self.devices = []
         self.list_items = []
         self.list_container = None
@@ -74,7 +76,7 @@ class DevicesPage:
                 # Print list items
                 self.refresh_device_list()
         except Exception as e:
-            print(f"Error setting up list: {str(e)}")
+            logger.error(f"Error setting up list: {e}")
 
     def refresh_device_list(self):
         """Refresh the list of devices"""
@@ -245,3 +247,8 @@ class DevicesPage:
         except Exception as e:
             print(f"Error creating device: {str(e)}")
             ui.notify('Error creating device')
+
+    def create_content(self):
+        """Create the page content"""
+        self.create_page()
+        return self

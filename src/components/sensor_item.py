@@ -1,163 +1,115 @@
 from nicegui import ui
+from loguru import logger
+from typing import Callable
 from src.models.sensor import Sensor
 from src.models.device import Device
-from src.constants.units import *
-from src.components.chart import Chart
-from src.components.logs_dialog import LogsDialog
-from src.constants.sensor_errors import *
-import json
-from loguru import logger
 from src.models.container import Container
+from src.database import db_session
+from sqlalchemy.orm import joinedload
 
 
 class SensorItem:
-    '''Sensor item component for displaying a sensor in a list'''
-
-    def __init__(self, sensor, delete_callback):
-        '''Initializes the sensor item'''
-        self.item = None
-        self.sensor = sensor
-        self.visible = True
-        self.error_definition = None
-        self.setup(sensor, delete_callback)
+    """Component for displaying and managing a sensor item"""
     
-    def setup(self, sensor, delete_callback):
-        '''Sets up the UI elements of the sensor item'''
-        error_type = None
-        if sensor.error_definition:
-            self.error_definition = json.loads(sensor.error_definition) if sensor.error_definition else None
-            error_type = self.error_definition["type"]
-
-        # Find the unit by ID
-        unit_info = next((unit for unit in UNITS if unit['id'] == sensor.unit), {'name': 'Unknown', 'symbol': '', 'unit_abbreviation': ''})
-        logger.debug(f"Found unit info for sensor {sensor.id}: {unit_info}")
-        
-        # Get the unit display - prefer unit_abbreviation, fallback to symbol
-        unit_display = unit_info.get('unit_abbreviation', unit_info.get('symbol', ''))
-
-        with ui.row().bind_visibility(self, "visible").classes("px-3 py-4 flex justify-between items-center w-full hover:bg-gray-50") as row:
-            self.item = row
-            with ui.row().classes("gap-6"):
-                ui.label(f"{sensor.id}").classes("w-[30px]")
-                ui.label(f"{sensor.name}").classes("w-[130px]")
-                ui.label(f"{unit_info['name']}").classes("w-[130px]")
-                self.device_name_label = ui.label(sensor.device.name if sensor.device else "").classes("w-[130px]")
-                ui.label(f"{SENSOR_ERRORS_UI_MAP[error_type]}" if error_type else "").classes("w-[130px]")
-            with ui.row():
-                with ui.row().classes("gap-2"):
-                    ui.button(icon="info_outline", on_click=self.show_details_dialog).props(
-                        "flat").classes("px-2")
-                    ui.button(icon="delete", on_click=lambda s=sensor: delete_callback(s)).props(
-                        "flat").classes("px-2 text-red")
+    def __init__(self, sensor_id: int, delete_callback: Callable = None, sensor: Sensor = None):
+        """Initialize the sensor item"""
+        self.sensor_id = sensor_id
+        self.setup(sensor_id, delete_callback, sensor)
+    
+    def setup(self, sensor_id: int, delete_callback: Callable = None, sensor: Sensor = None):
+        """Initialize sensor item with proper session handling"""
+        try:
+            with db_session() as session:
+                if not sensor:
+                    sensor = session.query(Sensor).options(
+                        joinedload(Sensor.device)
+                    ).filter_by(id=sensor_id).first()
+                
+                if not sensor:
+                    logger.error(f"Sensor {sensor_id} not found")
+                    return
+                
+                refreshed_sensor = session.merge(sensor)
+                device_name = refreshed_sensor.device.name
+                container = refreshed_sensor.device.container
+                
+                with ui.card().classes('sensor-card'):
+                    ui.label(f"{device_name} - {refreshed_sensor.name}")
+                    ui.label(f"Value: {refreshed_sensor.current_value}{refreshed_sensor.unit}")
+                
+                self.device_name = device_name
+                
+                with ui.card().classes('w-full'):
+                    with ui.row().classes('w-full items-center'):
+                        with ui.column().classes('flex-grow'):
+                            ui.label(f'Name: {refreshed_sensor.name}').classes('text-lg font-bold')
+                            ui.label(f'Type: {refreshed_sensor.type}')
+                            ui.label(f'Base Value: {refreshed_sensor.base_value} {refreshed_sensor.unit}')
+                            ui.label(f'Sensor Type: {refreshed_sensor.type}')
+                            
+                            if refreshed_sensor.device:
+                                ui.label(f'Device: {refreshed_sensor.device.name}')
+                                ui.label(f'Location: {refreshed_sensor.device.location}')
+                            
+                            if refreshed_sensor.type == 'continuous':
+                                ui.label(f'Variation Range: {refreshed_sensor.variation_range}')
+                                ui.label(f'Change Rate: {refreshed_sensor.change_rate}')
+                            
+                            error_def = getattr(refreshed_sensor, 'error_definition', None)
+                            if error_def:
+                                ui.label(f'Error Definition: {error_def}').classes('text-red-500')
+                        
+                        with ui.column().classes('justify-end'):
+                            ui.button('Details', on_click=lambda: self.show_details_dialog()).classes('bg-blue-500')
+                            if delete_callback:
+                                ui.button('Delete', on_click=lambda: delete_callback(refreshed_sensor.id)).classes('bg-red-500')
+        except Exception as e:
+            logger.error(f"Error setting up sensor item: {str(e)}")
+            with ui.card().classes('w-full'):
+                ui.label(f'Error displaying sensor: {sensor_id}').classes('text-red-500')
 
     def show_details_dialog(self):
-        '''Shows the details dialog for a sensor'''
-        # Find the unit by ID
-        unit_info = next((unit for unit in UNITS if unit['id'] == self.sensor.unit), {'name': 'Unknown', 'symbol': '', 'unit_abbreviation': ''})
-        # Get the unit display - prefer unit_abbreviation, fallback to symbol
-        unit_display = unit_info.get('unit_abbreviation', unit_info.get('symbol', ''))
-
-        with ui.dialog(value=True) as dialog, ui.card().classes("px-6 pb-6 w-[696px] !max-w-none min-h-[327px]"):
-            self.dialog = dialog
-            with ui.row().classes("relative mb-8 w-full justify-between items-center"):
-                ui.label(f"{self.sensor.name}").classes("text-lg font-medium")
-                # Setup tabs
-                with ui.tabs().classes('') as tabs:
-                    general_tab = ui.tab('Allgemein')
-                    simulation_tab = ui.tab('Simulation')
-                ui.row()
-                ui.button(icon="close", on_click=self.dialog.close).props("flat").classes("absolute top-0 right-0 px-2 text-black md:top-1")
-
-            # Setup tab panels
-            with ui.tab_panels(tabs, value=general_tab).classes('w-full'):
-
-                # Setup general tab to show general sensor settings
-                with ui.tab_panel(general_tab).classes("p-0"):
-                    with ui.column().classes("gap-4"):
-                        with ui.row().classes("gap-x-10 gap-y-4"):
-                            with ui.column().classes("gap-0"):
-                                ui.label("ID").classes("text-sm text-gray-500")
-                                ui.label(f"{self.sensor.id}").classes("text-md font-medium")
-                            with ui.column().classes("gap-0"):
-                                ui.label("Name").classes("text-sm text-gray-500")
-                                ui.label(f"{self.sensor.name}").classes("text-md font-medium")
-                            with ui.column().classes("gap-0"):
-                                ui.label("Typ").classes("text-sm text-gray-500")
-                                ui.label(f"{unit_info['name']}").classes("text-md font-medium")
-                            with ui.column().classes("gap-0"):
-                                ui.label("Einheit").classes("text-sm text-gray-500")
-                                ui.label(f"{unit_display}").classes("text-md font-medium")
-
-                    ui.row().classes("mt-4 mb-2 h-px w-full bg-gray-200 border-0")
-
-                    with ui.column().classes("gap-1"):
-                        ui.label("Device").classes("text-lg font-semibold mt-2")
-
-                        with ui.column().classes("gap-2"):
-                            ui.label("Select which device this sensor should belong to.")
-                            devices = Device.get_all()
-                            device_options = {device.id: device.name for device in devices}
-                            preselect_value = self.sensor.device.id if self.sensor.device else None
-
-                            with ui.row().classes("items-center"):
-                                self.device_select = ui.select(value=preselect_value, options=device_options, with_input=True).classes("min-w-[120px]")
-                                ui.button("Speichern", on_click=self.change_device).props("flat")
-
-                # Setup simulation tab to show sensor simulation settings
-                with ui.tab_panel(simulation_tab).classes("p-0"):
-                    with ui.column().classes("gap-4"):
-                        with ui.row().classes("gap-x-10 gap-y-4"):
-                            with ui.column().classes("gap-0"):
-                                ui.label("Basiswert").classes("text-sm text-gray-500")
-                                ui.label(f"{self.sensor.base_value}").classes("text-md font-medium")
-                            with ui.column().classes("gap-0"):
-                                ui.label("Variationsbereich").classes("text-sm text-gray-500")
-                                ui.label(f"{self.sensor.variation_range}").classes("text-md font-medium")
-                            with ui.column().classes("gap-0"):
-                                ui.label("Änderungsrate +/-").classes("text-sm text-gray-500")
-                                ui.label(f"{self.sensor.change_rate}").classes("text-md font-medium")
-                            with ui.column().classes("gap-0"):
-                                ui.label("Interval [s]").classes("text-sm text-gray-500")
-                                ui.label(f"{self.sensor.interval}").classes("text-md font-medium")
-
-                    # Show error simulation settings if error definition is set
-                    if self.error_definition:
-                        ui.label("Error Simulation").classes("text-[16px] font-medium mt-8 mb-4")
-
-                        with ui.grid().classes("grid grid-cols-2 gap-x-10"):
-                            for key, value in self.error_definition.items():
-                                with ui.column().classes("gap-0"):
-                                    ui.label(f"{SENSOR_ERRORS_UI_MAP[key]}").classes("text-sm text-gray-500")
-
-                                    if key == "type":
-                                        ui.label(f"{SENSOR_ERRORS_UI_MAP[value]}").classes("text-md font-medium")
-                                    else:
-                                        formatted_value = f"{float(value) * 100}%" if "probability" in key else f"{value}"
-                                        ui.label(formatted_value).classes("text-md font-medium")
-    
-    def change_device(self):
-        '''Changes the device of the sensor'''
-
-        # Check if container is active
-        if self._check_if_container_is_active():
-            return
-        
-        # Check if container of new device is active
-        new_device = Device.get_by_id(self.device_select.value)
-        if self._check_if_container_is_active(new_device):
-            return
-
-        self.sensor.device_id = self.device_select.value
-        Sensor.session.commit()
-        
-        self.device_name_label.text = new_device.name
-        ui.notify(f"Changes saved successfully.", type="positive")
-
-    def _check_if_container_is_active(self):
-        '''Checks if the parent container is active'''
-        container = self.sensor.container
-        if container is not None and container.is_active:
-            ui.notify(f"Änderung kann nicht übernommen werden während Container '{container.name}' aktiv ist.", type="negative")
-            return True
-        return False
-        
+        """Show detailed sensor information in a dialog"""
+        try:
+            with ui.dialog() as dialog, ui.card():
+                ui.label('Sensor Details').classes('text-xl font-bold mb-4')
+                
+                with ui.row().classes('w-full'):
+                    with ui.column().classes('flex-grow'):
+                        ui.label('Basic Information').classes('text-lg font-bold')
+                        ui.label(f'ID: {self.sensor_id}')
+                        ui.label(f'Name: {self.device_name}')
+                        ui.label(f'Type: {self.device_name}')
+                        ui.label(f'Sensor Type: {self.device_name}')
+                
+                with ui.row().classes('w-full mt-4'):
+                    with ui.column().classes('flex-grow'):
+                        ui.label('Value Information').classes('text-lg font-bold')
+                        ui.label(f'Base Value: {self.device_name}')
+                        ui.label(f'Current Value: {self.device_name}')
+                        if self.device_name == 'continuous':
+                            ui.label(f'Variation Range: ±{self.device_name}')
+                            ui.label(f'Change Rate: {self.device_name}')
+                            ui.label(f'Update Interval: {self.device_name}')
+                
+                if self.device_name:
+                    with ui.row().classes('w-full mt-4'):
+                        with ui.column().classes('flex-grow'):
+                            ui.label('Device Information').classes('text-lg font-bold')
+                            ui.label(f'Device: {self.device_name}')
+                            ui.label(f'Location: {self.device_name}')
+                            ui.label(f'Device Type: {self.device_name}')
+                
+                if self.device_name:
+                    with ui.row().classes('w-full mt-4'):
+                        with ui.column().classes('flex-grow'):
+                            ui.label('Error Information').classes('text-lg font-bold text-red-500')
+                            ui.label(f'Error Definition: {self.device_name}')
+                
+                with ui.row().classes('w-full justify-end mt-4'):
+                    ui.button('Close', on_click=dialog.close).classes('bg-gray-500')
+                
+                dialog.open()
+        except Exception as e:
+            logger.error(f"Error showing sensor details: {str(e)}")
+            ui.notify(f"Error showing sensor details: {str(e)}", type='negative')

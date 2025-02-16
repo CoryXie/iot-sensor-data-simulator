@@ -3,9 +3,12 @@ from src.models.sensor import Sensor
 from src.models.device import Device
 from src.models.container import Container
 from src.constants.units import UNITS
-from src.constants.device_templates import DEVICE_TEMPLATES, SCENARIO_TEMPLATES, ROOM_TYPES
+from src.constants.device_templates import DEVICE_TEMPLATES, SCENARIO_TEMPLATES, ROOM_TYPES, ROOM_TEMPLATES
 from src.constants.units import UNITS
 import logging
+from src.database import db_session, SessionLocal
+from loguru import logger
+from sqlalchemy.orm import joinedload
 
 logger = logging.getLogger(__name__)
 
@@ -115,180 +118,182 @@ class SmartHomeSetup:
 
     def activate_scenario(self, scenario_name: str) -> Optional[Container]:
         """Activate a scenario, deactivating any currently active scenario"""
+        session = db_session()
         try:
             # First, deactivate current scenario if any
             if not self.deactivate_current_scenario():
-                print("Failed to deactivate current scenario")
+                logger.warning("Failed to deactivate current scenario")
                 return None
 
             if scenario_name not in SCENARIO_TEMPLATES:
-                print(f"Unknown scenario: {scenario_name}")
+                logger.warning(f"Unknown scenario: {scenario_name}")
                 return None
 
             # Create or get the container for this scenario
-            container = Container.get_by_name(f"Smart Home - {scenario_name}")
+            container = session.query(Container).filter_by(name=f"Smart Home - {scenario_name}").first()
             if not container:
                 container = self.create_scenario(scenario_name)
                 if not container:
                     return None
 
-                # Ensure the container is persisted
-                container.save()
-
-            # Refresh to ensure we have the latest state
-            container.refresh()
-
+            # Ensure the container is in the current session
+            container = session.merge(container)
+            
             # Restore previous state if exists
             self.restore_scenario_state(scenario_name)
 
             # Start the container
-            container.start()
+            container.start(session)
+            session.commit()
+            
             self.active_scenario = scenario_name
 
             return container
 
         except Exception as e:
-            print(f"Error activating scenario: {str(e)}")
+            session.rollback()
+            logger.error(f"Error activating scenario: {str(e)}")
             return None
+        finally:
+            session.close()
 
     def create_scenario(self, scenario_name: str) -> Container:
-        """Create a new scenario with the given name"""
-        if scenario_name not in SCENARIO_TEMPLATES:
-            logger.error(f"Unknown scenario: {scenario_name}")
-            return None
-
-        scenario = SCENARIO_TEMPLATES[scenario_name]
-        container_name = f"Smart Home - {scenario_name}"
-
-        # First try to find existing container
-        existing_container = Container.get_by_name(container_name)
-        if existing_container:
-            # Stop and delete the existing container
-            existing_container.stop()
-            existing_container.delete()
-
-        # Create new container
+        """Create a new scenario with devices and sensors"""
         try:
-            container = Container.add(
-                name=container_name,
-                description=scenario.get('description', ''),
-                location='Smart Home'
-            )
-
-            if not container:
-                logger.error(f"Failed to create container for scenario: {scenario_name}")
-                return None
-
-            # Check if scenario has devices defined
-            if not scenario.get('devices'):
-                logger.warning(f"No devices defined for scenario: {scenario_name}")
-                return container
-
-            # Create devices for each room type
-            for room_type in ROOM_TYPES:
-                for device_type in scenario['devices']:
-                    if device_type in DEVICE_TEMPLATES:
-                        device_template = DEVICE_TEMPLATES[device_type]
-                        device_name = f"{room_type} - {device_type}"
-
-                        # Create device
-                        device = Device.add(
-                            device_name=device_name,
-                            container_id=container.id
-                        )
-
-                        if not device:
-                            logger.error(f"Failed to create device: {device_name}")
-                            continue
-
-                        # Create sensors for the device
-                        if 'sensors' in device_template:
-                            for sensor_template in device_template['sensors']:
-                                # Get unit ID from unit name
-                                unit_id = self.get_unit_id_by_name(sensor_template['unit'])
-                                if unit_id is None:
-                                    logger.warning(f"Unknown unit: {sensor_template['unit']}")
-                                    continue
-
-                                # Calculate base value as midpoint between min and max
-                                min_val = sensor_template.get('min', 0)
-                                max_val = sensor_template.get('max', 100)
-                                base_value = (min_val + max_val) / 2
-
-                                sensor = Sensor.add(
-                                    name=sensor_template['name'],
-                                    device_id=device.id,
-                                    unit=unit_id,
-                                    base_value=base_value,
-                                    variation_range=sensor_template.get('variation', 1.0),
-                                    change_rate=sensor_template.get('change_rate', 0.1),
-                                    interval=sensor_template.get('interval', 5)
+            logger.info(f"Creating new scenario: {scenario_name}")
+            
+            with db_session() as session:
+                # Create container
+                container = Container(
+                    name=f"Smart Home - {scenario_name}",
+                    description=f"Smart home setup for {scenario_name}",
+                    container_type="smart_home",
+                    is_active=False
+                )
+                session.add(container)
+                session.flush()  # Get container ID
+                
+                # Create devices and sensors for each room
+                for room_type in ROOM_TYPES:
+                    if room_type in ROOM_TEMPLATES:
+                        room_template = ROOM_TEMPLATES[room_type]
+                        
+                        # Create devices for this room
+                        for device_type in room_template['devices']:
+                            if device_type in DEVICE_TEMPLATES:
+                                device_template = DEVICE_TEMPLATES[device_type]
+                                
+                                # Create device
+                                device = Device(
+                                    name=f"{room_type} {device_type}",
+                                    type=device_type,
+                                    location=room_type,
+                                    container_id=container.id,
+                                    description=device_template['description']
                                 )
-                                if not sensor:
-                                    logger.error(f"Failed to create sensor: {sensor_template['name']}")
-                    else:
-                        logger.warning(f"Unknown device type: {device_type}")
-
-            return container
-
+                                session.add(device)
+                                session.flush()  # Get device ID
+                                
+                                # Create sensors for this device
+                                for sensor_template in device_template['sensors']:
+                                    sensor = Sensor(
+                                        name=sensor_template['name'],
+                                        type=sensor_template['type'],
+                                        device_id=device.id,
+                                        unit=sensor_template['unit'],
+                                        min_value=sensor_template['min'],
+                                        max_value=sensor_template['max'],
+                                        current_value=sensor_template['min'],
+                                        base_value=sensor_template['min'],
+                                        variation_range=sensor_template.get('variation', 1.0),
+                                        change_rate=sensor_template.get('change_rate', 0.1),
+                                        interval=sensor_template.get('interval', 5)
+                                    )
+                                    session.add(sensor)
+                
+                session.commit()
+                # Refresh the container to ensure all relationships are loaded
+                session.refresh(container)
+                logger.info(f"Successfully created scenario: {scenario_name}")
+                return container
+                
         except Exception as e:
-            logger.exception(f"Error creating scenario: {str(e)}")
-            # If container was created but failed to add devices, clean it up
-            if container:
-                container.delete()
-            return None
+            logger.error(f"Error creating scenario: {str(e)}")
+            raise
 
     def cleanup_scenario(self, scenario_name: str):
         """Clean up all components of a scenario"""
         try:
-            container = Container.get_by_name(f"Smart Home - {scenario_name}")
-            if container:
-                # Refresh to ensure we have the latest state
-                container.refresh()
+            with db_session() as session:
+                container = session.query(Container).filter_by(
+                    name=f"Smart Home - {scenario_name}"
+                ).first()
+                
+                if container:
+                    # Refresh within the same session
+                    session.refresh(container)
 
-                # Stop if active
-                if container.is_active:
-                    container.stop()
-                    if self.active_scenario == scenario_name:
-                        self.active_scenario = None
+                    # Stop if active
+                    if container.is_active:
+                        container.stop()
+                        if self.active_scenario == scenario_name:
+                            self.active_scenario = None
 
-                # Delete the container (this will cascade to devices and sensors)
-                container.delete()
+                    # Delete the container (this will cascade to devices and sensors)
+                    session.delete(container)
+                    session.commit()
 
-            # Remove saved state
-            if scenario_name in self.scenario_states:
-                del self.scenario_states[scenario_name]
+                # Remove saved state
+                if scenario_name in self.scenario_states:
+                    del self.scenario_states[scenario_name]
 
         except Exception as e:
-            print(f"Error cleaning up scenario: {str(e)}")
+            logger.error(f"Error cleaning up scenario: {str(e)}")
+            raise
 
     def get_active_scenario(self) -> Optional[str]:
         """Get the name of the currently active scenario"""
         return self.active_scenario
 
-    def list_scenarios(self) -> List[Dict]:
-        """List all available scenarios with their current status"""
+    def list_scenarios(self):
+        """List all available scenarios"""
         try:
+            session = db_session()
+            containers = session.query(Container).options(
+                joinedload(Container.scenario),
+                joinedload(Container.devices)
+                .joinedload(Device.sensors)
+            ).all()
+            
             scenarios = []
+            for container in containers:
+                scenario = {
+                    'id': container.id,
+                    'name': container.name,
+                    'description': container.description,
+                    'type': container.container_type,
+                    'device_count': len(container.devices),
+                    'sensor_count': sum(len(d.sensors) for d in container.devices),
+                    'is_template': False,
+                    'is_active': container.is_active
+                }
+                scenarios.append(scenario)
+            
+            # Add template scenarios
             for name, template in SCENARIO_TEMPLATES.items():
-                container = Container.get_by_name(f"Smart Home - {name}")
-                scenario_info = {
-                    'id': container.id if container else None,
-                    'name': name,
-                    'description': template['description'],
-                    'device_count': len(container.devices) if container else 0,
-                    'sensor_count': sum(len(device.sensors) for device in container.devices) if container else 0,
-                    'is_active': container.is_active if container else False
-                } if container else {
+                scenarios.append({
                     'id': None,
                     'name': name,
                     'description': template['description'],
-                    'device_count': 0,
-                    'sensor_count': 0,
+                    'type': template['type'],
+                    'device_count': len(template['devices']),
+                    'sensor_count': sum(len(DEVICE_TEMPLATES[d]['sensors']) for d in template['devices']),
+                    'is_template': True,
                     'is_active': False
-                }
-                scenarios.append(scenario_info)
-            return scenarios
+                })
+                
+            return sorted(scenarios, key=lambda x: x['name'])
+        
         except Exception as e:
-            print(f"Error listing scenarios: {str(e)}")
+            logger.error(f"Error listing scenarios: {str(e)}")
             return []

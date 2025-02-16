@@ -58,13 +58,31 @@ class SmartHomeEvent:
         return False
 
 class EventSystem:
-    """Main event system for managing smart home events"""
+    """Event system for handling component communication"""
     
     def __init__(self):
-        logger.info("Initializing EventSystem")
-        self.events: List[SmartHomeEvent] = []
-        self.emergency_events: List[SmartHomeEvent] = []
-        
+        """Initialize event system with empty subscribers"""
+        self.subscribers = {}
+        self._events = {}
+        logger.info("EventSystem initialized")
+
+    def subscribe(self, event_type: str, callback: callable):
+        """Subscribe to an event type with a callback"""
+        if event_type not in self.subscribers:
+            self.subscribers[event_type] = []
+        self.subscribers[event_type].append(callback)
+        logger.debug(f"Subscribed to {event_type} events")
+
+    def emit(self, event_type: str, data: dict):
+        """Emit an event to all subscribers"""
+        if event_type in self.subscribers:
+            for callback in self.subscribers[event_type]:
+                try:
+                    callback(data)
+                except Exception as e:
+                    logger.error(f"Event callback error: {str(e)}")
+        logger.debug(f"Emitted {event_type} event")
+
     def add_event(self, event: SmartHomeEvent):
         """Add an event to the system"""
         self.events.append(event)
@@ -115,4 +133,19 @@ class EventSystem:
     
     def get_active_emergencies(self) -> List[SmartHomeEvent]:
         """Get list of active emergency events"""
-        return [event for event in self.emergency_events if event.is_active] 
+        return [event for event in self.emergency_events if event.is_active]
+
+    def on(self, event_name: str):
+        """Decorator to register event handlers"""
+        def decorator(func):
+            self._events.setdefault(event_name, []).append(func)
+            return func
+        return decorator
+    
+    def trigger(self, event_name: str, *args, **kwargs):
+        """Trigger all handlers for an event"""
+        for handler in self._events.get(event_name, []):
+            try:
+                handler(*args, **kwargs)
+            except Exception as e:
+                print(f"Error handling event {event_name}: {str(e)}") 

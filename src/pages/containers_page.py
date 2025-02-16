@@ -6,13 +6,15 @@ from src.components.navigation import Navigation
 from src.components.container_card import ContainerCard
 from src.components.live_view_dialog import LiveViewDialog
 from src.utils.iot_hub_helper import IoTHubHelper
+from loguru import logger
 
 
 class ContainersPage:
     '''This class represents the containers page.'''
 
-    def __init__(self, iot_hub_helper):
+    def __init__(self, iot_hub_helper=None):
         self.iot_hub_helper = iot_hub_helper
+        logger.info("Initializing ContainersPage")
         self.containers = []
         self.cards_grid = None
         self.cards = []
@@ -82,7 +84,7 @@ class ContainersPage:
                     )
                     self.cards.append(card)
         except Exception as e:
-            print(f"Error setting up cards grid: {str(e)}")
+            logger.error(f"Error setting up cards grid: {e}")
 
     def setup_note_label(self):
         '''Sets up the note label, which is shown when no containers are available for instance'''
@@ -109,7 +111,7 @@ class ContainersPage:
             self.active_containers_count = sum(1 for c in self.containers if c.is_active)
             self.inactive_containers_count = self.containers_count - self.active_containers_count
         except Exception as e:
-            print(f"Error updating stats: {str(e)}")
+            logger.error(f"Error updating stats: {e}")
 
     def filter_handler(self, e=None):
         """Handle container filtering"""
@@ -129,7 +131,7 @@ class ContainersPage:
                 
                 card.card.classes('hidden', remove=True) if name_match and state_match else card.card.classes('hidden', add=True)
         except Exception as e:
-            print(f"Error handling filter: {str(e)}")
+            logger.error(f"Error handling filter: {e}")
 
     def show_note(self, message):
         '''Shows the note label with the given message'''
@@ -301,3 +303,8 @@ class ContainersPage:
             return
 
         self.live_view_dialog.show(container)
+
+    def create_content(self):
+        """Create the page content"""
+        self.create_page()
+        return self

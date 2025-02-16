@@ -3,6 +3,7 @@ import random
 import datetime
 import json
 from loguru import logger
+import time
 
 DRIFT_ITERATIONS = 10
 
@@ -12,10 +13,7 @@ class Simulator:
     def __init__(self, sensor):
         '''Initializes the simulator.'''
         self.sensor = sensor
-        self.base_value = sensor.base_value
-        self.variation_range = sensor.variation_range
-        self.change_rate = sensor.change_rate
-        self.last_value = self.base_value
+        self.last_value = sensor.current_value
         logger.debug(f"Initializing simulator for sensor {sensor.name} (ID: {sensor.id})")
         self.iteration = 0
         self.previous_value = sensor.base_value
@@ -53,13 +51,13 @@ class Simulator:
         '''Generates a single data record.'''
         try:
             # Calculate new value based on last value and parameters
-            max_change = self.variation_range * self.change_rate
+            max_change = self.sensor.variation_range * self.sensor.change_rate
             random_change = random.uniform(-max_change, max_change)
             
             # Ensure value stays within variation range
             new_value = self.last_value + random_change
-            min_value = self.base_value - self.variation_range
-            max_value = self.base_value + self.variation_range
+            min_value = self.sensor.base_value - self.sensor.variation_range
+            max_value = self.sensor.base_value + self.sensor.variation_range
             
             # Clamp value to valid range
             new_value = max(min_value, min(new_value, max_value))
@@ -88,7 +86,7 @@ class Simulator:
         except Exception as e:
             logger.error(f"Error generating data for sensor {self.sensor.name}: {str(e)}")
             return {
-                'value': self.base_value,
+                'value': self.sensor.base_value,
                 'timestamp': datetime.datetime.now().isoformat()
             }
 
@@ -157,6 +155,79 @@ class Simulator:
             deviation = random.uniform(-variation_range, variation_range)
             drift_change = average_drift_rate + deviation
 
-            self.base_value += drift_change
+            self.sensor.base_value += drift_change
             logger.debug(f"Applied drift change to sensor {self.sensor.name}: {drift_change}")
         return {"value": value}
+
+    def validate_value(self, value):
+        """Validate sensor value against allowed range"""
+        try:
+            min_val = self.sensor.base_value - self.sensor.variation_range
+            max_val = self.sensor.base_value + self.sensor.variation_range
+            
+            # Handle boolean-like sensors (motion, door)
+            if self.sensor.type in ['motion', 'door']:
+                if value not in (0, 1):
+                    logger.warning(f"Invalid value {value} for boolean sensor {self.sensor.name}")
+                    raise ValueError(f"Invalid value {value} for boolean sensor {self.sensor.name}")
+            
+            # Validate numeric sensors
+            elif not (min_val <= value <= max_val):
+                logger.warning(f"Value {value} out of range [{min_val}-{max_val}] for sensor {self.sensor.name}")
+                raise ValueError(f"Value {value} out of range [{min_val}-{max_val}] for sensor {self.sensor.name}")
+                
+            return True
+        except Exception as e:
+            logger.error(f"Error validating value: {e}")
+            return False
+
+    def _calculate_simulated_value(self):
+        """Calculate simulated value based on sensor type"""
+        # Implementation of _calculate_simulated_value method
+        pass
+
+    def generate_value(self):
+        """Generate a new simulated value, handling errors."""
+        try:
+            # Get the base value to work with
+            base = self.last_value if self.last_value is not None else self.sensor.base_value
+            
+            # Calculate random variation
+            variation = random.uniform(-self.sensor.variation_range, self.sensor.variation_range)
+            
+            # Apply change rate
+            new_value = base + (variation * self.sensor.change_rate)
+            
+            # Clamp to min/max
+            new_value = max(self.sensor.min_value, min(self.sensor.max_value, new_value))
+            
+            # Round based on type
+            if self.sensor.type in ['temperature']:
+                new_value = round(new_value, 1)
+            elif self.sensor.type in ['humidity', 'light']:
+                new_value = round(new_value, 0)
+            elif self.sensor.type in ['motion', 'door']:
+                new_value = 1 if new_value > (self.sensor.max_value / 2) else 0
+            else:
+                new_value = round(new_value, 2)
+            
+            self.last_value = new_value  # Update last_value
+            return new_value
+            
+        except Exception as e:
+            logger.error(f"Error generating simulated value: {e}")
+            return self.sensor.base_value
+
+    def apply_error(self, value):
+        """Applies the error definition to the sensor value."""
+        if self.error_definition:
+            error_type = self.error_definition["type"]
+            if error_type == ANOMALY:
+                return self._handle_anomaly_error(value)
+            elif error_type == MCAR:
+                return self._handle_mcar_error(value)
+            elif error_type == DUPLICATE_DATA:
+                return self._handle_duplicate_data_error(value)
+            elif error_type == DRIFT:
+                return self._handle_drift_error(value)
+        return {"value": value}  # Return original if no error

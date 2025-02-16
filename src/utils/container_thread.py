@@ -1,16 +1,29 @@
 import threading
+from loguru import logger
+# from src.models.container import Container  # Remove top-level import
+import time
 
 class ContainerThread(threading.Thread):
-    '''Thread class with a stop() method. The thread itself has to check if stopped() returns True'''
-
-    def __init__(self,  *args, **kwargs):
-        '''Initializes the thread.'''
-        super(ContainerThread, self).__init__(*args, **kwargs)
+    """Thread class with proper cleanup for container logic"""
+    
+    def __init__(self, target):
+        super().__init__(daemon=True)
+        self.target = target
         self._stop_event = threading.Event()
 
+    def run(self):
+        """Run the container logic with error handling"""
+        try:
+            self.target()
+        except Exception as e:
+            logger.error(f"Container thread failed: {str(e)}")
+        finally:
+            logger.info("Container thread stopped")
+
     def stop(self):
-        '''Stops the thread.'''
+        """Signal the thread to stop"""
         self._stop_event.set()
+        logger.info("Container thread stop requested")
 
     def stopped(self):
         '''Returns True if the thread is stopped.'''

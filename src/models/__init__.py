@@ -1,8 +1,20 @@
-"""Models package for database entities""" 
+"""Models package for database entities"""
 
-from src.models.container import Container
-from src.models.device import Device
-from src.models.sensor import Sensor
-from src.models.option import Option
+# Explicitly control import order to break cycles
+from .base_model import BaseModel
+from .container import Container
+from .device import Device
+from .sensor import Sensor
+from .scenario import Scenario
+from .room import Room
+from .option import Option  # Must be last
 
-__all__ = ['Container', 'Device', 'Sensor', 'Option'] 
+__all__ = [
+    'BaseModel',
+    'Container',
+    'Device',
+    'Sensor',
+    'Scenario',
+    'Room',
+    'Option'
+]

@@ -4,100 +4,76 @@ from src.utils.response import Response
 import paho.mqtt.client as mqtt
 import json
 import os
+from loguru import logger
 
 
 class MQTTHelper():
     '''Helper class to send data to a MQTT broker'''
 
-    def __init__(self, topic, container_id=None):
-        '''Initializes the MQTT helper'''
-        self.topic = topic
-        self.is_connected = False
-        self.broker_address = os.getenv("MQTT_BROKER_ADDRESS")
-        self.broker_port = os.getenv("MQTT_BROKER_PORT")
+    _instance = None
 
-        # Check if broker address and port are set
-        if self.broker_address is None or self.broker_port is None:
-            ui.notify("MQTT-Broker not configured", type="negative")
-            return
+    @classmethod
+    def get_instance(cls):
+        """Get singleton instance"""
+        if cls._instance is None:
+            cls._instance = MQTTHelper(
+                os.getenv('MQTT_BROKER_ADDRESS'),
+                int(os.getenv('MQTT_BROKER_PORT', 1883))
+            )
+        return cls._instance
 
-        # Check if broker port is valid
-        try:
-            self.broker_port = int(self.broker_port)
-        except ValueError:
-            ui.notify("Provided port is invalid", type="negative")
+    def __init__(self, broker_address, broker_port):
+        self.broker_address = broker_address
+        self.broker_port = broker_port
+        self.topic = ""
+        self.qos = 0
+        self.retain = False
+        self.client = mqtt.Client()
+        self.client.on_connect = self._on_connect
+        self.client.on_publish = self._on_publish
+        self.connect()
 
-        # Create MQTT client
-        client_id = f"container-{container_id}" if container_id else None
-        self.client = mqtt.Client(client_id=client_id)
-        
     def connect(self):
-        '''Connects to the MQTT broker'''
-
-        # Check if client is initialized
-        if self.client is None:
-            return
-
-        # Set authentication credentials
-        credentials = self.get_auth_credentials()
-        if credentials is not None:
-            self.client.username_pw_set(credentials["username"], credentials["password"])
-
-        # Connect to broker
         try:
-            self.client.on_connect = self._on_connect
-            self.client.connect(self.broker_address, self.broker_port)
+            logger.info(f"Connecting to MQTT broker at {self.broker_address}:{self.broker_port}")
+            self.client.connect(self.broker_address, self.broker_port, 60)
             self.client.loop_start()
-        except ConnectionRefusedError as e:
-            return Response(False, f"Connection to MQTT broker refused")
+            logger.info("Connected to MQTT broker")
         except Exception as e:
-            return Response(False, f"Connection to MQTT broker failed: {e}")
-        else:
-            return Response(True, "Successfully connected to MQTT broker")
-        
-    def _on_connect(self, client, userdata, flags, rc):
-        if rc == 0:
-            self.is_connected = True
+            logger.error(f"MQTT Connection Error: {str(e)}")
 
-    def publish(self, data):
-        '''Publish data to a MQTT topic'''
-
-        # Check if client is connected
-        if self.client is None or self.is_connected is False:
-            return Response(False, "MQTT-Client not connected")
-        
-        # Prevent sending messages in demo mode
-        is_demo_mode = Option.get_boolean('demo_mode')
-        if is_demo_mode:
-            return Response(False, "Demo mode active. Messages will not be sent.")
-        
-        # Prevent manipulation of original data used in other places
-        data_copy = data.copy()
-        
-        # Convert datetime to ISO format
-        data_copy["timestamp"] = data_copy["timestamp"].isoformat()
-
-        # Remove sendDuplicate flag
-        send_duplicate = data_copy.get("sendDuplicate", False)
-        data_copy.pop("sendDuplicate", None)
-
-        # Convert the dictionary to JSON string
-        message = json.dumps(data_copy)
-
-        # Publish message
-        for _ in range(1 if not send_duplicate else 2):
-            print(f"Sending message '{message}' to topic '{self.topic}'")
-            self.client.publish(self.topic, message)
-
-        return Response(True, "Message sent successfully")
-
-    def disconnect(self):
+    def disconnect_from_broker(self):
         '''Disconnects from the MQTT broker'''
-        if self.client is None:
-            print("MQTT-Client not connected")
-            return False
-
+        self.client.loop_stop()
         self.client.disconnect()
+        logger.info("Disconnected from MQTT broker")
+
+    def publish(self, payload):
+        '''Publishes a message to the MQTT broker'''
+        try:
+            self.client.publish(self.topic, payload=payload, qos=self.qos, retain=self.retain)
+        except Exception as e:
+            logger.error(f"Error publishing to MQTT broker: {e}")
+
+    def publish_sensor_data(self, sensor_data):
+        """Publish sensor data to MQTT topic"""
+        try:
+            topic = f"smart_home/{sensor_data['room']}/{sensor_data['sensor_type']}"
+            self.client.publish(topic, json.dumps(sensor_data))
+            logger.debug(f"Published to {topic}: {sensor_data['value']}")
+        except Exception as e:
+            logger.error(f"MQTT Publish Error: {str(e)}")
+
+    def _on_connect(self, client, userdata, flags, rc):
+        """MQTT connection callback"""
+        if rc == 0:
+            logger.debug(f"Connected to MQTT broker, topic: {self.topic}")
+        else:
+            logger.error(f"MQTT Connection failed with code {rc}")
+
+    def _on_publish(self, client, userdata, mid):
+        """MQTT publish callback"""
+        logger.debug(f"Message published (MID: {mid})")
 
     def get_auth_credentials(self):
         '''Returns the authentication credentials for the MQTT broker'''

@@ -1,0 +1,61 @@
+/* Adjust room dimensions */
+
+.room {
+    width: 100%;
+    min-height: 300px;
+    padding: 1rem;
+    margin: 0.5rem;
+    transition: all 0.3s ease;
+}
+
+
+/* Make grid cells larger */
+
+.grid-cell {
+    min-width: 420px;
+    /* Match room width + margins */
+    min-height: 330px;
+    /* Match room height + margins */
+}
+
+
+/* Scale sensor displays */
+
+.sensor-value {
+    font-size: 1.2em;
+    padding: 8px;
+}
+
+.sensor-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.device-list {
+    scrollbar-width: thin;
+    scrollbar-color: #3b82f6 #f1f5f9;
+}
+
+.device-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.device-list::-webkit-scrollbar-track {
+    background: #f1f5f9;
+}
+
+.device-list::-webkit-scrollbar-thumb {
+    background-color: #3b82f6;
+    border-radius: 3px;
+}
+
+.scenario-transition-enter-active,
+.scenario-transition-leave-active {
+    transition: all 0.3s ease;
+}
+
+.scenario-transition-enter-from,
+.scenario-transition-leave-to {
+    opacity: 0;
+    transform: translateY(-10px);
+}

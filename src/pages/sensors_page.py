@@ -6,6 +6,7 @@ from src.constants.sensor_errors import *
 from src.components.sensor_error_cards import AnomalyCard, MCARCard, DuplicateDataCard, DriftCard
 from src.components.sensor_item import SensorItem
 from src.models.sensor import Sensor
+from loguru import logger
 
 DEFAULT_BASE_VALUE = 25.00
 DEFAULT_VARIATION_RANGE = 5.00
@@ -15,8 +16,10 @@ DEFAULT_INTERVAL = 2
 class SensorsPage():
     '''This class represents the sensors page.'''
 
-    def __init__(self):
+    def __init__(self, iot_hub_helper=None):
         '''Initializes the page'''
+        self.iot_hub_helper = iot_hub_helper
+        logger.info("Initializing SensorsPage")
         self.sensors = []
         self.list_items = []
         self.sensor_error_card = None
@@ -76,8 +79,11 @@ class SensorsPage():
                 self.show_note('No Sensors available')
             else:
                 for sensor in self.sensors:
-                    new_item = SensorItem(sensor=sensor,
-                                          delete_callback=self.delete_button_handler)
+                    new_item = SensorItem(
+                        sensor_id=sensor.id,
+                        sensor=sensor,
+                        delete_callback=lambda s=sensor: self.delete_sensor(s)
+                    )
                     self.list_items.append(new_item)
 
     def setup_note_label(self):
@@ -274,8 +280,11 @@ class SensorsPage():
 
         # Add to list
         with self.list_container:
-            new_item = SensorItem(sensor=new_sensor,
-                                  delete_callback=self.delete_button_handler)
+            new_item = SensorItem(
+                sensor_id=new_sensor.id,
+                sensor=new_sensor,
+                delete_callback=lambda s=new_sensor: self.delete_sensor(s)
+            )
             self.list_items.append(new_item)
 
         dialog.close()
@@ -283,20 +292,8 @@ class SensorsPage():
 
         self.update_stats()
 
-    def delete_button_handler(self, sensor):
-        '''Handles the delete button click. Opens a dialog to confirm the deletion of the device'''
-        with ui.dialog(value=True) as dialog, ui.card().classes('items-center'):
-            ui.label(
-                f"Do you want to delete the sensor '{sensor.name}'?")
-            with ui.row():
-                ui.button('Cancel', on_click=dialog.close).props('flat')
-                ui.button('Delete', on_click=lambda d=dialog: self.delete_handler(
-                    d, sensor)).classes('text-white bg-red')
-
-    def delete_handler(self, dialog, sensor):
+    def delete_sensor(self, sensor):
         '''Handles the deletion of a sensor. Deletes the sensor from the database and updates the list'''
-        dialog.close()
-
         # Check if container is active
         if sensor.device is not None and sensor.device.container is not None and sensor.device.container.is_active:
             ui.notify(
@@ -317,3 +314,8 @@ class SensorsPage():
 
         if len(self.sensors) == 0:
             self.show_note('No Sensors available')
+
+    def create_content(self):
+        """Create the page content"""
+        self.create_page()
+        return self
