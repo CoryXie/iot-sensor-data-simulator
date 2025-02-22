@@ -14,22 +14,20 @@ class Scenario(BaseModel):
     name = Column(String(100), unique=True)
     is_active = Column(Boolean, default=False)
     scenario_type = Column(String(50)) # e.g., 'routine', 'standard', 'night'
-    description: Mapped[Optional[str]] = Column(Text)
+    description = Column(Text)
     
-    # Relationships
-    container_id = Column(Integer, ForeignKey('containers.id'))
-    container = relationship(
-        "Container", 
+    # Corrected relationship
+    containers = relationship(
+        "Container",
         back_populates="scenario",
         cascade="all, delete-orphan",
-        single_parent=True
+        foreign_keys="Container.scenario_id"
     )
 
-    def __init__(self, name: str, scenario_type: str, container: 'Container', is_active: bool = False, description: Optional[str] = None):
+    def __init__(self, name: str, scenario_type: str, is_active: bool = False, description: Optional[str] = None):
         """Initialize a scenario"""
         super().__init__()
         self.name = name
-        self.container = container
         self.is_active = is_active
         self.scenario_type = scenario_type
         self.description = description
@@ -50,17 +48,19 @@ class Scenario(BaseModel):
         else:
             self.stop_simulation()
 
-    def start_simulation(self):
-        """Start simulating sensors in this scenario"""
+    def activate(self):
+        """Activate scenario by starting related containers"""
         from src.utils.smart_home_simulator import SmartHomeSimulator
         simulator = SmartHomeSimulator.instance()
-        simulator.start_scenario(self.container)
         
-    def stop_simulation(self):
-        """Stop all simulations for this scenario"""
-        from src.utils.smart_home_simulator import SmartHomeSimulator
-        simulator = SmartHomeSimulator.instance()
-        simulator.stop_scenario(self.container)
+        for container in self.containers:
+            container.start()  # Use start() instead of activate()
+            simulator.start_container(container)
+
+    def deactivate(self):
+        """Deactivate scenario by stopping containers"""
+        for container in self.containers:
+            container.stop()  # Use stop() instead of deactivate()
 
 # Defines simulation/experiment scenarios with:
 # - Scenario configuration parameters

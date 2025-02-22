@@ -45,7 +45,7 @@ class Sensor(BaseModel):
 
     # Relationships
     device: Mapped["Device"] = relationship("Device", back_populates="sensors")
-    room: Mapped["Room"] = relationship("Room", back_populates="sensors")
+    room: Mapped["Room"] = relationship("Room", back_populates="sensors", overlaps="sensors")
     container: Mapped["Container"] = relationship("Container", back_populates="sensors")
 
     @property
@@ -65,41 +65,24 @@ class Sensor(BaseModel):
         else:
             self._current_value_db = self.min_value
 
-    def __init__(self, name: str, type: str, device: Device, unit: str,
-                 min_value: float, max_value: float, current_value: float,
-                 base_value: float, variation_range: float, change_rate: float,
-                 interval: int):
-        """Initialize a sensor
-        
-        Args:
-            name: Sensor name
-            type: Type of sensor
-            device: Device this sensor belongs to
-            unit: Unit of measurement
-            min_value: Minimum allowed value
-            max_value: Maximum allowed value
-            current_value: Current value of the sensor
-            base_value: Optional base value for simulation
-            variation_range: Optional range of value variation
-            change_rate: Optional rate of value change
-            interval: Optional update interval in seconds
-        """
+    def __init__(self, name: str, type: str, unit: str = None, min_value: float = 0, 
+                 max_value: float = 100, variation_range: float = 5.0, 
+                 change_rate: float = 1.0, interval: int = 5, room: 'Room' = None):
+        """Initialize a sensor with default values"""
         super().__init__()
         self.name = name
-        self.type = type  # Use type directly instead of sensor_type
-        self.device = device
+        self.type = type
         self.unit = unit
         self.min_value = min_value
         self.max_value = max_value
-        self.current_value = current_value
-        self.base_value = base_value
         self.variation_range = variation_range
         self.change_rate = change_rate
         self.interval = interval
+        self.current_value = (min_value + max_value) / 2
+        self.base_value = self.current_value
+        self.room = room
         if not hasattr(self, '_simulator'):
             self._simulator = None
-        if self._current_value_db is None:
-            self.current_value = self.min_value
 
     def get_simulator(self):
         """Get or create the simulator instance"""

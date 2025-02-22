@@ -1,9 +1,13 @@
 from nicegui import ui
 from src.models.device import Device
 from src.models.sensor import Sensor
+from src.models.room import Room
 from src.components.device_item import DeviceItem
 from src.models.device import Device
 from loguru import logger
+from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import Session
+from src.database import SessionLocal
 
 
 class DevicesPage:
@@ -48,80 +52,41 @@ class DevicesPage:
                     placeholder='Filter', on_change=self.filter_handler).classes('w-44')
 
     def setup_list(self):
-        '''Sets up the list of devices'''
+        """Setup/refresh the device list with proper relationships"""
         try:
-            # Create a new container for the list
-            if self.list_container is not None:
-                try:
-                    self.list_container.delete()
-                except Exception as e:
-                    print(f"Error removing old list container: {str(e)}")
-
-            self.list_container = ui.column().classes('relative w-full min-w-[600px] gap-0 divide-y')
-
-            with self.list_container:
-                # Add headings row
-                headings = [{'name': 'ID', 'classes': 'w-[30px]'},
-                            {'name': 'Name', 'classes': 'w-[130px]'},
-                            {'name': 'Container', 'classes': 'w-[130px]'},
-                            {'name': 'Sensors', 'classes': 'w-[60px]'}]
-
-                with ui.row().classes('px-3 py-6 flex gap-6 items-center w-full'):
-                    for heading in headings:
-                        ui.label(heading['name']).classes(
-                            f'font-medium {heading["classes"]}')
-
-                self.setup_note_label()
-
-                # Print list items
-                self.refresh_device_list()
+            if self.list_container:
+                self.list_container.clear()
+            
+            with SessionLocal() as session:
+                # Eager load devices with their sensors and room
+                devices = session.query(Device).options(
+                    joinedload(Device.sensors),
+                    joinedload(Device.room)
+                ).all()
+                
+                for device in devices:
+                    with ui.card().classes('w-full mb-4 p-4 bg-white rounded-lg shadow-sm'):
+                        # Device header with room info
+                        with ui.row().classes('w-full justify-between items-center'):
+                            ui.label(device.name).classes('text-xl font-semibold')
+                            if device.room:
+                                ui.badge(device.room.name, color='blue')
+                        
+                        # Sensor details
+                        with ui.row().classes('pl-4 gap-2'):
+                            for sensor in device.sensors:
+                                ui.badge(f"{sensor.name} ({sensor.type})", color='green')
+                        
+                        # Status indicator
+                        ui.badge('Online' if device.is_active else 'Offline', 
+                               color='green' if device.is_active else 'gray')
+                        
+            self.devices_count = len(devices)
+            self.update_stats()
+            
         except Exception as e:
-            logger.error(f"Error setting up list: {e}")
-
-    def refresh_device_list(self):
-        """Refresh the list of devices"""
-        try:
-            # Clear existing items by removing their parent containers
-            for item in self.list_items:
-                if hasattr(item, 'item') and item.item is not None:
-                    try:
-                        if hasattr(item.item, 'parent') and item.item.parent is not None:
-                            item.item.parent.delete()
-                        else:
-                            item.item.delete()
-                    except Exception as e:
-                        print(f"Error removing item container: {str(e)}")
-
-            # Clear the list
-            self.list_items.clear()
-
-            # Get updated devices
-            self.devices = Device.get_all()
-
-            # Show note if no devices
-            if len(self.devices) == 0:
-                self.show_note('No devices available')
-                return
-
-            # Hide note and add devices
-            if hasattr(self, 'note_label'):
-                self.note_label.set_visibility(False)
-
-            # Create new items within the list container
-            if self.list_container is not None and self.list_container.client:
-                with self.list_container:
-                    for device in self.devices:
-                        try:
-                            new_item = DeviceItem(device=device,
-                                                delete_callback=self.delete_button_handler)
-                            self.list_items.append(new_item)
-                        except Exception as e:
-                            print(f"Error creating device item: {str(e)}")
-
-        except Exception as e:
-            print(f"Error refreshing device list: {str(e)}")
-            if hasattr(self, 'note_label'):
-                self.show_note('Error loading devices')
+            logger.error(f"Error refreshing device list: {str(e)}")
+            ui.notify("Error loading devices", type='negative')
 
     def setup_note_label(self):
         '''Sets up the note label'''

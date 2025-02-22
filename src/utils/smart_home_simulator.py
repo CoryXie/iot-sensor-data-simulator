@@ -14,6 +14,8 @@ from sqlalchemy.orm import joinedload
 import json
 import os
 import subprocess
+from src.models.scenario import Scenario
+from src.constants.device_templates import ROOM_TEMPLATES
 
 class SmartHomeSimulator:
     """Class to handle smart home sensor value simulation"""
@@ -244,64 +246,66 @@ class SmartHomeSimulator:
             self._schedule_reconnect()
 
     def publish_sensor_data(self, sensor_id, value, sensor_type, device_name, location):
-        """Thread-safe publishing"""
-        with self._publish_lock:
-            try:
-                # Standardize topic format to lowercase with underscores
-                clean_location = location.lower().replace(" ", "_")
-                clean_device = device_name.lower().replace(" ", "_")
-                clean_type = sensor_type.lower().replace(" ", "_")
-                topic = f"smart_home/{clean_location}/{clean_device}/{clean_type}"
+        """Publish data with validation"""
+        try:
+            # Validate value before publishing
+            valid_value = float(value) if value is not None else 0.0
+            if not isinstance(valid_value, (int, float)):
+                raise ValueError("Invalid sensor value type")
                 
-                payload = json.dumps({
-                    "id": sensor_id,
-                    "type": sensor_type,
-                    "value": float(value),
-                    "unit": self._get_unit_for_type(sensor_type),
-                    "device": device_name,
-                    "location": location,
-                    "timestamp": datetime.utcnow().isoformat()
-                })
-                
-                logger.info(f"📡 Publishing to {topic}") 
-                logger.debug(f"Using broker: {self.broker_address}:{self.broker_port}")
-                logger.debug(f"Payload: {payload}")
-                logger.debug(f"Topic structure: {topic}")
-                logger.debug(f"Device location: {location} | Name: {device_name}")
-                
-                if not self.client.is_connected():
-                    logger.warning("Client not connected, reconnecting...")
-                    self.connect_to_broker()
-                    time.sleep(0.5)
-
-                info = self.client.publish(topic, payload, qos=1)
-                
-                # Add message tracking
-                self._active_messages[info.mid] = {
-                    'timestamp': time.time(),
-                    'topic': topic,
-                    'payload': payload
-                }
-                
-                # Cleanup old messages
-                self._cleanup_message_queue()
-                
-                # Add UI update event
-                self.event_system.emit(
-                    "sensor_update",
-                    {
-                        "sensor_id": sensor_id,
-                        "value": value,
-                        "location": location,
-                        "device": device_name,
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                )
-                
-            except Exception as e:
-                logger.error(f"Publish failed: {str(e)}")
-                time.sleep(1)
+            # Standardize topic format to lowercase with underscores
+            clean_location = location.lower().replace(" ", "_")
+            clean_device = device_name.lower().replace(" ", "_")
+            clean_type = sensor_type.lower().replace(" ", "_")
+            topic = f"smart_home/{clean_location}/{clean_device}/{clean_type}"
+            
+            payload = json.dumps({
+                "id": sensor_id,
+                "type": sensor_type,
+                "value": valid_value,
+                "unit": self._get_unit_for_type(sensor_type),
+                "device": device_name,
+                "location": location,
+                "timestamp": datetime.utcnow().isoformat()
+            })
+            
+            logger.info(f"📡 Publishing to {topic}") 
+            logger.debug(f"Using broker: {self.broker_address}:{self.broker_port}")
+            logger.debug(f"Payload: {payload}")
+            logger.debug(f"Topic structure: {topic}")
+            logger.debug(f"Device location: {location} | Name: {device_name}")
+            
+            if not self.client.is_connected():
+                logger.warning("Client not connected, reconnecting...")
                 self.connect_to_broker()
+                time.sleep(0.5)
+
+            info = self.client.publish(topic, payload, qos=1)
+            
+            # Add message tracking
+            self._active_messages[info.mid] = {
+                'timestamp': time.time(),
+                'topic': topic,
+                'payload': payload
+            }
+            
+            # Cleanup old messages
+            self._cleanup_message_queue()
+            
+            # Add UI update event
+            self.event_system.emit(
+                "sensor_update",
+                {
+                    "sensor_id": sensor_id,
+                    "value": value,
+                    "location": location,
+                    "device": device_name,
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            )
+            
+        except Exception as e:
+            logger.error(f"Invalid sensor data: {str(e)}")
 
     def _get_unit_for_type(self, sensor_type):
         unit_map = {
@@ -393,41 +397,156 @@ class SmartHomeSimulator:
             logger.error(f"Error getting sensor value: {e}")
             return 0.0
 
-    def start_scenario(self, container):
-        """Start simulating sensors for a scenario"""
-        if self.active_scenario:
-            self.stop_scenario(self.active_scenario)
+    def start_scenario(self, scenario: Scenario):
+        """Start all containers in a scenario"""
+        for container in scenario.containers:
+            container.start()
             
-        self.active_scenario = container
-        for sensor in container.sensors:
-            self._start_sensor_simulation(sensor)
-            
-        self.event_system.emit('scenario_changed', container)
-
-    def stop_scenario(self, container):
-        """Stop simulating sensors for a scenario"""
-        if self.active_scenario == container:
-            for sensor in container.sensors:
-                self._stop_sensor_simulation(sensor)
-            self.active_scenario = None
-            self.event_system.emit('scenario_changed', None)
+    def stop_scenario(self, scenario: Scenario):
+        """Stop all containers in a scenario"""
+        for container in scenario.containers:
+            container.stop()
 
     def _start_sensor_simulation(self, sensor):
-        """Start individual sensor simulation thread"""
+        """Start individual sensor simulation thread with MQTT"""
         if sensor.id in self.sensor_threads:
             return
-            
-        def simulate():
-            while sensor.id in self.sensor_threads:
-                # Update sensor value based on simulation logic
-                sensor.simulate()
-                time.sleep(sensor.interval)
-                
-        thread = threading.Thread(target=simulate)
+        
+        # Create thread using the _simulate_sensor method
+        thread = threading.Thread(
+            target=self._simulate_sensor,
+            args=(sensor,),
+            daemon=True
+        )
         self.sensor_threads[sensor.id] = thread
         thread.start()
+        logger.debug(f"Started simulation for sensor {sensor.name}")
+
+    def _simulate_sensor(self, sensor: Sensor):
+        """Simulate sensor values with proper session handling"""
+        try:
+            with db_session() as init_session:
+                # Get initial sensor ID within session context
+                current_sensor = init_session.merge(sensor)
+                sensor_id = current_sensor.id
+                sensor_name = current_sensor.name
+
+            logger.debug(f"Starting simulation loop for sensor {sensor_name} (ID: {sensor_id})")
+            
+            while True:
+                with db_session() as session:
+                    # Check if sensor is still active
+                    if sensor_id not in self.sensor_threads:
+                        break
+                    
+                    # Refresh sensor state from database
+                    current_sensor = session.merge(sensor)
+                    session.refresh(current_sensor)
+                    
+                    # Capture all needed attributes within session context
+                    device = current_sensor.device
+                    room = device.room if device else None
+                    room_type = room.room_type if room else "default"
+                    sensor_type = current_sensor.type.lower()
+                    base_value = self._get_sensor_base_value(sensor_type, room_type)
+                    sensor_interval = current_sensor.interval
+
+                    # Calculate and update value
+                    current_value = self._calculate_sensor_value(
+                        sensor_type, 
+                        base_value,
+                        room_type
+                    )
+                    current_sensor.current_value = current_value
+                    session.commit()
+
+                    # Prepare publish data
+                    publish_data = {
+                        'sensor_id': sensor_id,
+                        'value': current_value,
+                        'sensor_type': sensor_type,
+                        'device_name': device.name if device else "Unknown",
+                        'location': room_type
+                    }
+
+                # Operations outside session context
+                self.publish_sensor_data(**publish_data)
+                time.sleep(sensor_interval)
+
+        except Exception as e:
+            logger.error(f"Sensor [ID:{sensor_id}] error: {str(e)}")
+            self._stop_sensor_simulation_by_id(sensor_id)
+
+    def _calculate_sensor_value(self, sensor_type: str, base_value: float, room_type: str) -> float:
+        """Calculate sensor value with validation"""
+        try:
+            # Validate base value
+            base = float(base_value) if base_value is not None else 20.0
+            
+            if sensor_type == 'temperature':
+                variation = random.uniform(-2.0, 2.0) + self._get_scenario_variation(sensor_type)
+                return round(base + variation, 1)
+            elif sensor_type == 'humidity':
+                variation = random.uniform(-5.0, 5.0)
+                return max(0.0, min(100.0, base + variation))
+            elif sensor_type == 'motion':
+                return 1.0 if random.random() < (0.1 + self._get_scenario_variation(sensor_type)) else 0.0
+            elif sensor_type in ['co', 'smoke']:
+                return random.uniform(0.0, 10.0)
+            elif sensor_type == 'light':
+                return max(0.0, base + random.uniform(-50.0, 50.0))
+            # Add other sensor types as needed
+            return float(base)
+        except Exception as e:
+            logger.warning(f"Value calculation error, using default: {str(e)}")
+            return 20.0  # Fallback default
 
     def _stop_sensor_simulation(self, sensor):
-        """Stop sensor simulation thread"""
-        if sensor.id in self.sensor_threads:
-            del self.sensor_threads[sensor.id]
+        """Stop sensor using ID from database session"""
+        with db_session() as session:
+            current_sensor = session.merge(sensor)
+            self._stop_sensor_simulation_by_id(current_sensor.id)
+
+    def _stop_sensor_simulation_by_id(self, sensor_id: int):
+        """Thread-safe sensor stopping by ID"""
+        if sensor_id in self.sensor_threads:
+            del self.sensor_threads[sensor_id]
+            logger.debug(f"Stopped simulation for sensor ID: {sensor_id}")
+
+    def start_container(self, container):
+        """Start all sensors in a container"""
+        logger.debug(f"Starting container {container.name} with {len(container.devices)} devices")
+        for device in container.devices:
+            logger.debug(f"Starting device {device.name} with {len(device.sensors)} sensors")
+            for sensor in device.sensors:
+                logger.debug(f"Starting sensor {sensor.name} (ID: {sensor.id})")
+                self._start_sensor_simulation(sensor)
+        logger.info(f"Started container {container.name} sensors")
+
+    def stop_container(self, container):
+        """Stop all sensors in a container"""
+        for device in container.devices:
+            for sensor in device.sensors:
+                self._stop_sensor_simulation(sensor)
+        logger.info(f"Stopped container {container.name} sensors")
+
+    def _get_sensor_base_value(self, sensor_type: str, room_type: str) -> float:
+        """Get base value from templates with fallback defaults"""
+        try:
+            # First try sensor-specific base value
+            base_value = ROOM_TEMPLATES[room_type].get(f'base_{sensor_type}')
+            if base_value is not None:
+                return base_value
+            
+            # Fallback to general temperature base
+            return ROOM_TEMPLATES[room_type].get('base_temperature', 20.0)
+        except KeyError:
+            # Default values for unknown room types
+            return {
+                'temperature': 20.0,
+                'humidity': 50.0,
+                'motion': 0.0,
+                'light': 300.0,
+                'co': 0.0,
+                'smoke': 0.0
+            }.get(sensor_type, 0.0)

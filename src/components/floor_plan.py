@@ -58,59 +58,22 @@ class FloorPlan:
         }.get(sensor_type.lower(), 'sensors')
 
     def create_floor_plan(self):
-        """Create 3 rows with 2 rooms each using responsive grid"""
-        with ui.column().classes('w-full h-full p-4 gap-4'):
-            # Row 1
-            with ui.grid(columns=2).classes('w-full h-1/3 gap-4'):
-                for name in ['Living Room', 'Kitchen']:
-                    if name in self.rooms:
-                        self._create_room_ui(self.rooms[name])
-            
-            # Row 2
-            with ui.grid(columns=2).classes('w-full h-1/3 gap-4'):
-                for name in ['Bedroom', 'Bathroom']:
-                    if name in self.rooms:
-                        self._create_room_ui(self.rooms[name])
-            
-            # Row 3
-            with ui.grid(columns=2).classes('w-full h-1/3 gap-4'):
-                for name in ['Office', 'Garage']:
-                    if name in self.rooms:
-                        self._create_room_ui(self.rooms[name])
-
-    def _create_room_ui(self, room: Room):
-        """Create room UI with devices and sensors"""
-        with ui.card().classes('room bg-blue-50 p-4 rounded-lg w-full'):
-            # Room header
-            ui.label(room.name).classes('text-xl font-bold mb-4')
-            
-            # Devices section
-            with ui.column().classes('w-full mb-4 space-y-2'):
-                ui.label('Devices').classes('text-sm font-semibold text-gray-600')
-                for device in room.devices:
-                    with ui.row().classes('items-center space-x-2 p-2 hover:bg-blue-100 rounded'):
-                        ui.icon(device.icon or 'devices').classes('text-xl text-blue-600')
-                        ui.label(device.name).classes('text-gray-700')
-            
-            # Sensors section
-            with ui.grid(columns=2).classes('w-full gap-2'):
-                for sensor in room.sensors:
-                    with ui.card().classes('p-2 bg-white hover:shadow-md transition-shadow'):
-                        with ui.row().classes('items-center justify-between'):
-                            # Sensor icon and name
-                            with ui.row().classes('items-center space-x-2'):
-                                ui.icon(self.get_sensor_icon(sensor.type)).classes('text-2xl text-green-600')
-                                ui.label(sensor.name).classes('font-medium')
-                            
-                            # Real-time value display
-                            with ui.row().classes('items-center'):
-                                ui.label().bind_text_from(
-                                    sensor, 'current_value',
-                                    lambda v, u=sensor.unit: f"{v} {u}"
-                                ).classes('font-mono text-lg')
-                                ui.spinner(size='sm').classes('ml-2').bind_visibility_from(
-                                    sensor, 'current_value', lambda v: v is None
-                                )
+        """Generate floor plan visualization"""
+        with ui.grid(columns=3).classes('w-full gap-4'):
+            for room_name, room_data in self.rooms.items():
+                with ui.card().classes('room-card p-4 w-full h-80'):
+                    ui.label(room_name).classes('text-xl font-bold mb-4')
+                    with ui.scroll_area().classes('w-full h-full'):
+                        with ui.column().classes('w-full space-y-2'):
+                            for device in room_data['devices']:
+                                with ui.card().classes('device-card p-2 w-full'):
+                                    with ui.row().classes('items-center'):
+                                        ui.icon('devices').classes('text-2xl mr-2')
+                                        ui.label(device['name'])
+                                    with ui.row().classes('pl-8 space-x-2'):
+                                        for sensor in device['sensors']:
+                                            with ui.card().classes('sensor-chip p-1 px-2'):
+                                                ui.label(f"{sensor['name']}: {sensor['value']}{sensor['unit']}")
 
     def update_room_data(self, room_type: str, devices: list, sensors: list = None):
         """Update room content with real devices and sensors"""
@@ -151,15 +114,38 @@ class FloorPlan:
         }.get(sensor_type, 'sensors')
 
     def _load_rooms(self):
-        """Load rooms from database with their devices and sensors"""
+        """Load rooms with their associated devices and sensors"""
         with self.db() as session:
             rooms = session.query(Room).options(
-                joinedload(Room.devices),
-                joinedload(Room.sensors)
+                joinedload(Room.devices).joinedload(Device.sensors)
             ).all()
             
-            self.rooms = {room.name: room for room in rooms}
-            logger.debug(f"Loaded {len(self.rooms)} rooms for floor plan") 
+            self.rooms = {}
+            for room in rooms:
+                self.rooms[room.name] = {
+                    'devices': [
+                        {
+                            'name': device.name,
+                            'sensors': [
+                                {
+                                    'name': sensor.name,
+                                    'value': sensor.current_value,
+                                    'unit': sensor.unit,
+                                    'type': sensor.type
+                                }
+                                for sensor in device.sensors
+                            ]
+                        }
+                        for device in room.devices
+                    ]
+                }
+            # Fix the sensor count calculation
+            total_sensors = sum(
+                len(device['sensors']) 
+                for room_data in self.rooms.values() 
+                for device in room_data['devices']
+            )
+            logger.debug(f"Loaded {len(rooms)} rooms with {total_sensors} sensors")
 
     def _handle_mqtt_update(self, msg):
         """Update sensor displays from MQTT messages"""
@@ -174,3 +160,44 @@ class FloorPlan:
                 
         except Exception as e:
             logger.error(f"Error handling MQTT update: {str(e)}") 
+
+    def _setup_sensor_updates(self):
+        """Setup sensor update event handling"""
+        @self.event_system.on('sensor_update')
+        def handle_sensor_update(event_name, sensor_data):
+            room_type = sensor_data.get('room_type', 'unknown')
+            device_type = sensor_data.get('device_type', 'generic')
+            
+            # Update corresponding room element
+            if room_type in self.room_elements:
+                room = self.room_elements[room_type]
+                device_id = sensor_data['device_id']
+                
+                # Find or create device element
+                device_element = next((d for d in room['devices'] if d['id'] == device_id), None)
+                if not device_element:
+                    device_element = {
+                        'id': device_id,
+                        'type': device_type,
+                        'sensors': [],
+                        'element': ui.icon('devices').classes('absolute')
+                    }
+                    room['devices'].append(device_element)
+                
+                # Update sensor value
+                sensor_element = next((s for s in device_element['sensors'] 
+                                    if s['name'] == sensor_data['name']), None)
+                if not sensor_element:
+                    sensor_element = {
+                        'name': sensor_data['name'],
+                        'value': ui.label().classes('text-xs')
+                    }
+                    device_element['sensors'].append(sensor_element)
+                
+                sensor_element['value'].set_text(
+                    f"{sensor_data['value']}{sensor_data.get('unit', '')}"
+                )
+                
+                # Update icon color based on status
+                status_color = 'green' if sensor_data.get('status') == 'normal' else 'red'
+                device_element['element'].classes(replace='text-' + status_color) 

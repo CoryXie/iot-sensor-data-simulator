@@ -8,20 +8,21 @@ from src.models.scenario import Scenario
 from src.models.container import Container
 from src.database.database import db_session
 from src.models import Option
+import uuid
 
 def initialize_rooms():
     """Initialize rooms with proper session handling"""
-    with db_session() as session:
+    with SessionLocal() as session:
         try:
             logger.info("Initializing rooms...")
-            for room_name, room_data in ROOM_TEMPLATES.items():
+            for room_name, template in ROOM_TEMPLATES.items():
                 if not session.query(Room).filter_by(name=room_name).first():
-                    logger.debug(f"Creating room: {room_name}")
-                    session.add(Room(
+                    room = Room(
                         name=room_name,
-                        room_type=room_data['room_type'],
-                        description=room_data['description']
-                    ))
+                        room_type=template['room_type'],
+                        description=template['description']
+                    )
+                    session.add(room)
             session.commit()
             logger.success("Rooms initialized successfully.")
         except Exception as e:
@@ -54,45 +55,54 @@ def initialize_rooms():
 #     finally:
 #         db.close()
 
-def initialize_scenarios(session):
-    """Initialize default scenarios from templates"""
-    try:
-        logger.info("Initializing scenarios from templates...")
-        for name, template in SCENARIO_TEMPLATES.items():
-            scenario = session.query(Scenario).filter_by(name=name).first()
+def initialize_scenarios():
+    """Initialize scenarios from templates"""
+    with SessionLocal() as session:
+        # Clear existing data
+        session.query(Container).delete()
+        session.query(Scenario).delete()
+        
+        for scenario_name, config in SCENARIO_TEMPLATES.items():
+            # Create scenario
+            scenario = Scenario(
+                name=scenario_name,
+                scenario_type=config['type'],
+                description=config['description'],
+                is_active=config.get('is_active', False)
+            )
             
-            if not scenario:
-                scenario = Scenario(
-                    name=name,
-                    description=template['description'],
-                    scenario_type=template['type'],
-                    is_active=template['is_active']
+            # Create container with unique name
+            container = Container(
+                name=f"{scenario_name} Container - {uuid.uuid4().hex[:6]}",
+                container_type='scenario',
+                description=f"Container for {scenario_name} scenario",
+                interval=config.get('interval', 5)
+            )
+            
+            # Create devices for this container
+            devices = []
+            for device_type in config['devices']:
+                device = Device(
+                    name=f"{scenario_name} {device_type}",
+                    type=device_type
                 )
-                session.add(scenario)
-                logger.debug(f"Created new scenario: {name}")
-
-            # Update existing scenarios with template data
-            scenario.description = template['description']
-            scenario.scenario_type = template['type']
+                device.is_active = True  # Set after creation
+                
+                # Add sensors based on device type
+                if device_type in DEVICE_TEMPLATES:
+                    for sensor_config in DEVICE_TEMPLATES[device_type]['sensors']:
+                        sensor = Sensor(**sensor_config)
+                        device.sensors.append(sensor)
+                
+                devices.append(device)
             
-            # Create container relationship if missing
-            if not scenario.container:
-                container = Container(
-                    name=f"{name} Container",
-                    container_type="scenario",
-                    is_active=False
-                )
-                session.add(container)
-                scenario.container = container
+            container.devices = devices
+            scenario.containers.append(container)
             
-            session.flush()
+            session.add(scenario)
         
         session.commit()
-        logger.success("Scenarios initialized from templates")
-    except Exception as e:
-        session.rollback()
-        logger.error(f"Error initializing scenarios: {str(e)}")
-        raise
+    logger.success("Scenarios initialized from templates")
 
 def initialize_options():
     """Initialize default options if not already set"""
@@ -116,52 +126,45 @@ def initialize_options():
             raise
 
 def initialize_devices_and_sensors():
-    """Initialize devices and sensors from templates"""
-    with db_session() as session:
+    with SessionLocal() as session:
         try:
-            logger.info("Initializing devices and sensors...")
+            session.query(Sensor).delete()
+            session.query(Device).delete()
             
-            # Create devices from templates
-            for device_name, template in DEVICE_TEMPLATES.items():
-                # Find or create device
-                device = session.query(Device).filter_by(name=device_name).first()
-                if not device:
-                    logger.debug(f"Creating device: {device_name}")
+            for room_name, template in ROOM_TEMPLATES.items():
+                room = session.query(Room).filter_by(name=room_name).first()
+                if not room:
+                    continue
+                
+                for device_name in template['devices']:
+                    device_template = DEVICE_TEMPLATES[device_name]
+                    # Create device with proper room association
                     device = Device(
-                        name=device_name,
-                        type=template['type'],
-                        description=template['description'],
-                        icon=template['icon']
+                        name=f"{room_name} {device_name}",
+                        type=device_template['type']
                     )
+                    device.room = room  # Set relationship
                     session.add(device)
-                    session.flush()  # Get device ID for sensors
-
-                # Create sensors for this device
-                for sensor_template in template['sensors']:
-                    sensor = session.query(Sensor).filter_by(
-                        device_id=device.id,
-                        name=sensor_template['name']
-                    ).first()
+                    session.flush()
                     
-                    if not sensor:
-                        logger.debug(f"Creating sensor: {sensor_template['name']} for {device_name}")
-                        session.add(Sensor(
+                    # Create sensors and link to room
+                    for sensor_template in device_template['sensors']:
+                        sensor = Sensor(
                             name=sensor_template['name'],
                             type=sensor_template['type'],
-                            device=device,
-                            unit=sensor_template['unit'],
-                            min_value=sensor_template['min'],
-                            max_value=sensor_template['max'],
-                            current_value=sensor_template.get('base', sensor_template['min']),
-                            base_value=sensor_template.get('base', sensor_template['min']),
-                            variation_range=sensor_template['variation'],
-                            change_rate=sensor_template['change_rate'],
-                            interval=sensor_template['interval']
-                        ))
-
-            session.commit()
-            logger.success("Devices and sensors initialized successfully")
+                            unit=sensor_template.get('unit'),
+                            min_value=sensor_template.get('min_value', 0),
+                            max_value=sensor_template.get('max_value', 100),
+                            variation_range=sensor_template.get('variation_range', 1.0),
+                            change_rate=sensor_template.get('change_rate', 0.1),
+                            interval=sensor_template.get('interval', 5),
+                            room=room  # Now matches constructor
+                        )
+                        sensor.device = device
+                        session.add(sensor)
             
+            session.commit()
+            logger.success("Devices and sensors initialized with proper relationships")
         except Exception as e:
             session.rollback()
             logger.error(f"Device/sensor initialization failed: {e}")
@@ -177,7 +180,7 @@ def initialize_all_data():
         
         # Initialize scenarios with a dedicated session
         with db_session() as session:
-            initialize_scenarios(session)
+            initialize_scenarios()
             
         logger.info("Exiting initialize_all_data() function")
     except Exception as e:

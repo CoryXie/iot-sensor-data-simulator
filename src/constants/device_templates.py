@@ -13,12 +13,18 @@ ROOM_TEMPLATES = {
     'Living Room': {
         'room_type': 'living_room',
         'description': 'General living and relaxation area',
-        'devices': ['Environmental Monitor', 'Light Control', 'Security System']
+        'devices': ['Environmental Monitor', 'Light Control', 'Security System'],
+        'base_temperature': 22.0,
+        'base_humidity': 45.0,
+        'base_light': 400.0
     },
     'Kitchen': {
         'room_type': 'kitchen',
         'description': 'Area for cooking and food preparation',
-        'devices': ['Environmental Monitor', 'Light Control', 'Safety Monitor']
+        'devices': ['Environmental Monitor', 'Light Control', 'Safety Monitor'],
+        'base_temperature': 20.0,
+        'base_humidity': 50.0,
+        'base_light': 600.0
     },
     'Bedroom': {
         'room_type': 'bedroom',
@@ -52,9 +58,9 @@ DEVICE_TEMPLATES = {
                 "name": "Temperature",
                 "type": "temperature",
                 "unit": "°C",
-                "min": 15,
-                "max": 35,
-                "variation": 2.0,
+                "min_value": 15,
+                "max_value": 35,
+                "variation_range": 2.0,
                 "change_rate": 0.5,
                 "interval": 5
             },
@@ -62,9 +68,9 @@ DEVICE_TEMPLATES = {
                 "name": "Humidity",
                 "type": "humidity",
                 "unit": "%",
-                "min": 20,
-                "max": 90,
-                "variation": 5.0,
+                "min_value": 20,
+                "max_value": 90,
+                "variation_range": 5.0,
                 "change_rate": 1.0,
                 "interval": 5
             }
@@ -78,30 +84,29 @@ DEVICE_TEMPLATES = {
             {
                 "name": "Motion",
                 "type": "motion",
-                "min": 0,
-                "max": 100,
-                "unit": "percentage",
-                "variation": 10,
-                "change_rate": 50,
+                "min_value": 0,
+                "max_value": 1,
+                "variation_range": 0,
+                "change_rate": 0,
                 "interval": 1
             },
             {
                 "name": "Door Status",
                 "type": "contact_sensor",
-                "min": 0,
-                "max": 1,
+                "min_value": 0,
+                "max_value": 1,
                 "unit": "binary",
-                "variation": 1,
+                "variation_range": 1,
                 "change_rate": 1,
                 "interval": 1
             },
             {
                 "name": "Window Status",
                 "type": "Status",
-                "min": 0,
-                "max": 1,
+                "min_value": 0,
+                "max_value": 1,
                 "unit": "Binary",
-                "variation": 1,
+                "variation_range": 1,
                 "change_rate": 1,
                 "interval": 1
             }
@@ -113,22 +118,22 @@ DEVICE_TEMPLATES = {
         "icon": "mdi-lightbulb",
         "sensors": [
             {
-                "name": "Brightness",
-                "type": "brightness",
-                "unit": "%",
-                "min": 0,
-                "max": 100,
-                "variation": 10.0,
-                "change_rate": 5.0,
+                "name": "Light Level",
+                "type": "light",
+                "unit": "lux",
+                "min_value": 0,
+                "max_value": 1000,
+                "variation_range": 100,
+                "change_rate": 2.0,
                 "interval": 2
             },
             {
                 "name": "Color Temperature",
                 "type": "color_temp",
-                "min": 2700,
-                "max": 6500,
+                "min_value": 2700,
+                "max_value": 6500,
                 "unit": "kelvin",
-                "variation": 100,
+                "variation_range": 100,
                 "change_rate": 50,
                 "interval": 2
             }
@@ -140,22 +145,22 @@ DEVICE_TEMPLATES = {
         "icon": "mdi-alarm-light",
         "sensors": [
             {
-                "name": "Smoke Level",
+                "name": "Smoke",
                 "type": "smoke",
-                "min": 0,
-                "max": 100,
-                "unit": "percentage",
-                "variation": 5,
-                "change_rate": 2,
+                "unit": "ppm",
+                "min_value": 0,
+                "max_value": 100,
+                "variation_range": 0,
+                "change_rate": 0,
                 "interval": 5
             },
             {
                 "name": "CO Level",
                 "type": "co",
-                "min": 0,
-                "max": 1000,
+                "min_value": 0,
+                "max_value": 1000,
                 "unit": "ppm",
-                "variation": 10,
+                "variation_range": 10,
                 "change_rate": 5,
                 "interval": 5
             }
@@ -306,4 +311,20 @@ SCENARIO_TEMPLATES = {
         },
         "is_active": False
     }
+}
+
+DEVICE_ICONS = {
+    'thermostat': 'thermostat',
+    'light': 'lightbulb',
+    'security_camera': 'videocam',
+    'motion_sensor': 'sensors',
+    'smart_lock': 'lock',
+    'humidity_sensor': 'water_drop',
+    'default': 'device_unknown'
+}
+
+STATUS_COLORS = {
+    'active': '#4CAF50',  # Green
+    'inactive': '#9E9E9E', # Grey
+    'alert': '#F44336'     # Red
 }

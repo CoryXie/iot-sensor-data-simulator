@@ -35,21 +35,19 @@ class Container(BaseModel):
     created_at: Mapped[Optional[datetime]] = Column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[Optional[datetime]] = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     interval: Mapped[int] = Column(Integer, default=5)
+    scenario_id = Column(Integer, ForeignKey('scenarios.id'))
 
     # Relationships
-    devices: Mapped[List["Device"]] = relationship(
+    devices = relationship(
         "Device", 
-        back_populates="container", 
-        cascade="all, delete-orphan",
-        lazy="joined",  # Force eager loading
-        order_by="Device.name"
+        back_populates="container",
+        lazy="joined"  # Add eager loading
     )
 
     scenario = relationship(
         "Scenario", 
-        back_populates="container",  # Match the back_populates name
-        uselist=False,
-        cascade="all, delete-orphan"
+        back_populates="containers",
+        foreign_keys=[scenario_id]
     )
 
     sensors: Mapped[List["Sensor"]] = relationship(
@@ -62,6 +60,7 @@ class Container(BaseModel):
     # Runtime attributes (not mapped to database)
     _thread: ClassVar[Optional[ContainerThread]] = None
     _mqtt_helper: ClassVar[Optional[MQTTHelper]] = None
+    _observers: ClassVar[List["Observer"]] = []
 
     def __init__(self, name: str, container_type: str = 'scenario', description: str = None, is_active: bool = False, location: str = None, interval: int = 5):
         """Initialize a container
@@ -84,6 +83,7 @@ class Container(BaseModel):
         self.scenario = None  # Initialize scenario relationship
         self._thread = None
         self._mqtt_helper = None
+        self._observers = []  # Add observer list
 
     def run_logic(self):
         """Run the container logic and sensor updates"""
@@ -102,55 +102,21 @@ class Container(BaseModel):
                 self.status = 'error'
 
     def start(self):
-        """Start the container and all its devices"""
-        try:
-            with SessionLocal() as session:
-                db_container = session.query(Container).get(self.id)
-                if not db_container.is_active:
-                    db_container.is_active = True
-                    db_container.status = 'running'
-                    db_container.start_time = datetime.now()
-                    
-                    # Create and start thread
-                    self._thread = ContainerThread(target=self._run_container_logic)
-                    self._thread.start()
-                    
-                    session.commit()
-                    logger.info(f"Started container {self.name}")
-                    return True
-        except Exception as e:
-            logger.error(f"Error starting container {self.name}: {str(e)}")
-            return False
-
-    def _simulate_sensors(self, session):
-        """Simulates sensor data for all devices in the container."""
-        if not self.is_active:
-            return
-
+        """Start the container and its devices"""
+        self.is_active = True
+        self.status = 'running'
+        self.start_time = datetime.utcnow()
         for device in self.devices:
-            for sensor in device.sensors:
-                sensor.simulate_value(session) # Pass session to simulate_value
+            device.activate()
+        self._notify_observers()
 
     def stop(self):
-        """Stop the container and all its devices"""
-        try:
-            with SessionLocal() as session:
-                db_container = session.query(Container).get(self.id)
-                if db_container.is_active:
-                    db_container.is_active = False
-                    db_container.status = 'stopped'
-                    db_container.start_time = None
-                    session.commit()
-
-                    if self._thread and self._thread.is_alive():
-                        self._thread.stop()
-                        self._thread.join(timeout=5)
-                    
-                    logger.info(f"Stopped container {self.name}")
-                    return True
-        except Exception as e:
-            logger.error(f"Error stopping container {self.name}: {str(e)}")
-            return False
+        """Stop the container and its devices"""
+        self.is_active = False
+        self.status = 'stopped'
+        for device in self.devices:
+            device.deactivate()
+        self._notify_observers()
 
     @classmethod
     def get_by_name(cls, name: str) -> Optional['Container']:
@@ -321,3 +287,21 @@ class Container(BaseModel):
         """Remove a sensor from the container"""
         if sensor in self.sensors:
             self.sensors.remove(sensor)
+
+    def add_observer(self, observer):
+        """Add an observer to be notified of state changes"""
+        if observer not in self._observers:
+            self._observers.append(observer)
+
+    def remove_observer(self, observer):
+        """Remove an observer"""
+        if observer in self._observers:
+            self._observers.remove(observer)
+
+    def _notify_observers(self):
+        """Notify all observers of state changes"""
+        for observer in self._observers:
+            try:
+                observer.update_container_state(self)
+            except Exception as e:
+                logger.error(f"Error notifying observer: {str(e)}")

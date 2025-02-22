@@ -20,8 +20,8 @@ class Device(BaseModel):
     __table_args__ = {'extend_existing': True}
     
     id: Mapped[int] = Column(Integer, primary_key=True)
-    name = Column(String)
-    type = Column(String)
+    name = Column(String(100))
+    type = Column(String(50))
     description: Mapped[Optional[str]] = Column(String(200))
     location: Mapped[Optional[str]] = Column(String(50))
     icon: Mapped[Optional[str]] = Column(String(50), default='devices')
@@ -37,34 +37,27 @@ class Device(BaseModel):
         back_populates="devices",
         foreign_keys=[container_id]
     )
-    sensors: Mapped[List["Sensor"]] = relationship(
+    room = relationship("Room", back_populates="devices")
+    sensors = relationship(
         "Sensor", 
         back_populates="device", 
         cascade="all, delete-orphan",
-        lazy="joined"  # Force eager loading
+        lazy="joined"
     )
-    room: Mapped[Optional["Room"]] = relationship("Room", back_populates="devices")
     
-    def __init__(self, name: str, type: str, description: str = None, 
-                 icon: str = None, room_id: int = None, container=None):
-        """Initialize a device
-        
-        Args:
-            name: Device name
-            type: Device type
-            description: Optional device description
-            icon: Optional icon name
-            room_id: Optional room ID
-            container: Associated container
-        """
+    def __init__(self, name: str, type: str, description: str = None, location: str = None, 
+                 icon: str = None, room: 'Room' = None, container: 'Container' = None):
+        """Initialize a device with required fields"""
         super().__init__()
         self.name = name
         self.type = type
         self.description = description
+        self.location = location
         self.icon = icon
-        self.room_id = room_id
+        self.room = room
         self.container = container
-        self.is_active = True
+        # Set default values for other fields
+        self.is_active = False
 
     def add_sensor(self, sensor):
         """Add a sensor to this device"""
@@ -151,3 +144,17 @@ class Device(BaseModel):
 
     def __repr__(self):
         return f"<Device(name='{self.name}', type='{self.type}', location='{self.location}')>"
+
+    def activate(self):
+        """Activate the device and its sensors"""
+        self.is_active = True
+        for sensor in self.sensors:
+            sensor.is_active = True
+        self.updated_at = datetime.utcnow()
+
+    def deactivate(self):
+        """Deactivate the device and its sensors"""
+        self.is_active = False 
+        for sensor in self.sensors:
+            sensor.is_active = False
+        self.updated_at = datetime.utcnow()

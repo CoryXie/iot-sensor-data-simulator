@@ -40,29 +40,35 @@ class SmartHomePage:
 
     def _load_initial_data(self):
         """Load initial data from database and templates"""
-        with SessionLocal() as session:
-            try:
-                # Initialize scenarios with the current session
-                initialize_scenarios(session)
+        try:
+            with SessionLocal() as session:
+                # Load scenarios with their containers
+                self.scenarios = session.query(Scenario).options(
+                    joinedload(Scenario.containers)
+                ).all()
+                
+                # Update scenario activation logic
+                for scenario in self.scenarios:
+                    if scenario.is_active:
+                        for container in scenario.containers:
+                            container.start()
                 
                 # Refresh scenario list with proper query
                 scenarios = session.query(Scenario).options(
-                    joinedload(Scenario.container)
+                    joinedload(Scenario.containers)
                 ).all()
                 
                 # Update UI components
                 self.scenario_options = [s.name for s in scenarios]
-                self.scenario_select.options = self.scenario_options
-                self.scenario_select.update()
+                if self.scenario_select:
+                    self.scenario_select.options = self.scenario_options
+                    self.scenario_select.update()
                 
-                # Log results
                 logger.debug(f"Loaded {len(scenarios)} scenarios")
-                for s in scenarios:
-                    logger.trace(f"Scenario: {s.name} (Container: {s.container.id if s.container else 'None'})")
-                    
-            except Exception as e:
-                logger.error(f"Data loading failed: {str(e)}")
-                ui.notify("Failed to load scenarios", type='negative')
+                
+        except Exception as e:
+            logger.error(f"Data loading failed: {str(e)}")
+            ui.notify("Failed to load scenarios", type='negative')
 
     def _setup_event_handlers(self):
         """Set up event handlers for real-time updates"""
@@ -126,13 +132,14 @@ class SmartHomePage:
                 if self.active_container:
                     self.active_container.stop()
                 
-                # Start new scenario
-                container = session.query(Container).get(scenario.container_id)
-                if container.start():
-                    self.active_container = container
-                    logger.info(f"Activated scenario: {scenario_name}")
-                    ui.notify(f"Scenario activated: {scenario_name}", type='positive')
-                    self._update_smart_home()
+                # Start all containers in the new scenario
+                for container in scenario.containers:
+                    if container.start():
+                        self.active_container = container
+                        logger.info(f"Activated container {container.name} for scenario: {scenario_name}")
+                
+                ui.notify(f"Scenario activated: {scenario_name}", type='positive')
+                self._update_smart_home()
         except Exception as e:
             logger.error(f"Error changing scenario: {str(e)}")
             ui.notify(f"Error changing scenario: {str(e)}", type='negative')
@@ -165,12 +172,16 @@ class SmartHomePage:
         # Scenario selection row
         with ui.row().classes('w-full items-center gap-4 mb-4'):
             ui.label('Select Scenario:').classes('text-lg font-bold')
-            # Create the select component here in the proper context
             self.scenario_select = ui.select(
                 options=self.scenario_options,
-                on_change=lambda e: self._change_scenario(e.value)
+                on_change=lambda e: self._update_scenario_selection(e.value)
             ).classes('min-w-[300px]')
-            ui.button('Refresh', on_click=self._load_initial_data).classes('ml-4')
+            
+            # Add toggle button instead of refresh
+            self.scenario_toggle = ui.button('Start Scenario', 
+                                           on_click=lambda: self._toggle_scenario()).classes('ml-4') \
+                                          .props('icon=play_arrow color=positive')
+            ui.button('Refresh', on_click=self._load_initial_data).classes('ml-2')
         
         # Floor plan visualization
         with ui.card().classes('w-full h-[calc(100vh-200px)] p-4 bg-white rounded-lg shadow-sm'):
@@ -180,3 +191,56 @@ class SmartHomePage:
         # Load initial data after creating UI components
         self._load_initial_data()
         return self
+
+    def _update_scenario_selection(self, scenario_name: str):
+        """Handle scenario selection without auto-starting"""
+        self.selected_scenario = next((s for s in self.scenarios if s.name == scenario_name), None)
+        self._update_toggle_button_state()
+
+    def _toggle_scenario(self):
+        """Toggle scenario activation"""
+        if not self.selected_scenario:
+            ui.notify("No scenario selected", type='warning')
+            return
+        
+        try:
+            if self.selected_scenario.is_active:
+                self._stop_scenario()
+            else:
+                self._start_scenario()
+            
+            self._update_toggle_button_state()
+        except Exception as e:
+            logger.error(f"Scenario toggle failed: {e}")
+            ui.notify("Scenario operation failed", type='negative')
+
+    def _update_toggle_button_state(self):
+        """Update button appearance based on scenario state"""
+        if self.selected_scenario:
+            active = self.selected_scenario.is_active
+            self.scenario_toggle.props(f'icon={"stop" if active else "play_arrow"}')
+            self.scenario_toggle.text = 'Stop Scenario' if active else 'Start Scenario'
+            self.scenario_toggle.classes(replace='bg-red' if active else 'bg-positive')
+        else:
+            self.scenario_toggle.text = 'Select Scenario First'
+            self.scenario_toggle.classes(replace='bg-grey')
+
+    def _start_scenario(self):
+        """Start the selected scenario"""
+        with SessionLocal() as session:
+            # Eager load containers and their devices
+            scenario = session.query(Scenario).options(
+                joinedload(Scenario.containers).joinedload(Container.devices)
+            ).get(self.selected_scenario.id)
+            
+            scenario.activate()
+            session.commit()
+        ui.notify(f"Scenario started: {self.selected_scenario.name}", type='positive')
+
+    def _stop_scenario(self):
+        """Stop the selected scenario"""
+        with SessionLocal() as session:
+            scenario = session.query(Scenario).get(self.selected_scenario.id)
+            scenario.deactivate()
+            session.commit()
+        ui.notify(f"Scenario stopped: {self.selected_scenario.name}", type='warning')

@@ -18,7 +18,7 @@ from src.models.sensor import Sensor
 from src.utils.iot_hub_helper import IoTHubHelper
 from loguru import logger
 from src.components.navigation import Navigation
-from src.database import Base, engine, init_db, ensure_database
+from src.database import Base, engine, init_db, ensure_database, SessionLocal
 from sqlalchemy import inspect as sa_inspect
 from src.models.model_registry import register_models
 import signal
@@ -128,7 +128,13 @@ def init():
                 with ui.tab_panel('Sensors').classes('p-4 bg-white rounded-lg shadow-sm'):
                     sensors_page.create_content()
 
-        logger.info("Application initialized successfully")
+    @ui.page('/debug_sensors')
+    def debug_sensors():
+        with SessionLocal() as session:
+            sensors = session.query(Sensor).all()
+            return [f"{s.name}: {s.current_value}" for s in sensors]
+
+    logger.info("Application initialized successfully")
 
 def handle_shutdown(signum, frame):
     logger.warning("Received shutdown signal")

@@ -13,9 +13,9 @@ class Room(BaseModel):
     room_type = Column(String(50))  # e.g., 'living_room', 'bedroom'
     description = Column(String(200))
     
-    # Relationships
-    devices = relationship("Device", back_populates="room")
-    sensors = relationship("Sensor", back_populates="room")
+    # Correct relationships
+    devices = relationship("Device", back_populates="room", cascade="all, delete-orphan")
+    sensors = relationship("Sensor", back_populates="room", overlaps="room")
     
     def __init__(self, name: str, room_type: str, description: str = None):
         super().__init__()
