@@ -62,25 +62,20 @@ class Container(BaseModel):
     _mqtt_helper: ClassVar[Optional[MQTTHelper]] = None
     _observers: ClassVar[List["Observer"]] = []
 
-    def __init__(self, name: str, container_type: str = 'scenario', description: str = None, is_active: bool = False, location: str = None, interval: int = 5):
-        """Initialize a container
-        
-        Args:
-            name: Container name
-            container_type: Type of container
-            description: Optional container description
-            is_active: Whether the container is active
-            location: Optional location
-            interval: Interval for container logic
-        """
-        super().__init__()
+    def __init__(self, name: str, description: str = None, 
+                 location: str = None, scenario: 'Scenario' = None, **kwargs):
+        """Initialize a container with optional scenario relationship"""
+        super().__init__(**kwargs)
         self.name = name
-        self.container_type = container_type
         self.description = description
-        self.is_active = is_active
         self.location = location
-        self.interval = interval
-        self.scenario = None  # Initialize scenario relationship
+        self.scenario = scenario  # Direct relationship assignment
+        # Initialize other fields with defaults
+        self.container_type = kwargs.get('container_type', 'generic')
+        self.is_active = kwargs.get('is_active', False)
+        self.start_time = kwargs.get('start_time', datetime.utcnow())
+        self.status = kwargs.get('status', 'inactive')
+        self.interval = kwargs.get('interval', 5)
         self._thread = None
         self._mqtt_helper = None
         self._observers = []  # Add observer list
@@ -233,20 +228,8 @@ class Container(BaseModel):
         while self.is_active:
             try:
                 with SessionLocal() as session:
-                    # Get fresh container instance for this iteration
-                    db_container = session.query(Container).options(
-                        joinedload(Container.devices)
-                        .joinedload(Device.sensors)
-                    ).get(self.id)
-
-                    if not db_container:
-                        logger.error(f"Container {self.id} not found in database")
-                        break
-
-                    # Simulate sensor values
+                    db_container = session.query(Container).get(self.id)
                     db_container._simulate_sensors(session)
-                    
-                    # Publish data
                     db_container.publish_sensor_data()
 
                     # Calculate sleep time

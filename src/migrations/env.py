@@ -15,7 +15,6 @@ from src.models.base import Base
 from src.models.container import Container
 from src.models.device import Device
 from src.models.sensor import Sensor
-from src.models.schedule import Schedule
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

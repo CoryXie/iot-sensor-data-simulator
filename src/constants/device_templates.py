@@ -169,147 +169,163 @@ DEVICE_TEMPLATES = {
 }
 
 SCENARIO_TEMPLATES = {
-    "Morning Routine": {
-        "description": "Early morning activities with gradual light and temperature changes",
-        "type": "routine",
-        "devices": ["Environmental Monitor", "Light Control", "Security System"],
-        "rooms": ["living_room", "bedroom", "kitchen"],
-        "transitions": ["Day Mode", "Away Mode", "Work From Home"],
-        "sensor_adjustments": {
-            "temperature": {"offset": 2, "variation": 1},
-            "motion": {"probability": 0.3},
-            "energy": {"factor": 0.8}
-        },
-        "is_active": False
+    'Morning Routine': {
+        'type': 'routine',
+        'rooms': ['bedroom', 'bathroom', 'kitchen'],
+        'description': 'Morning activities across multiple rooms',
+        'devices': [
+            {
+                'device': 'Environmental Monitor',
+                'sensors': ['Temperature', 'Humidity'],
+                'rooms': ['bedroom', 'bathroom']
+            },
+            {
+                'device': 'Light Control',
+                'sensors': ['Light Level', 'Color Temperature'],
+                'rooms': ['bedroom', 'kitchen']
+            }
+        ]
     },
-    "Day Mode": {
-        "description": "Optimal settings for daytime activities",
-        "type": "standard",
-        "devices": ["Environmental Monitor", "Light Control", "Security System", "Safety Monitor"],
-        "rooms": ["living_room", "kitchen", "office"],
-        "transitions": ["Evening Mode", "Away Mode"],
-        "sensor_adjustments": {
-            "temperature": {"offset": 0, "variation": 1.5},
-            "motion": {"probability": 0.1},
-            "energy": {"factor": 1.0}
-        },
-        "is_active": False
+    'Day Mode': {
+        'type': 'standard',
+        'room_type': 'living_room',
+        'description': 'Optimal daytime settings',
+        'devices': [
+            {
+                'name': 'Environmental Monitor',
+                'type': 'environmental',
+                'sensors': [
+                    {'name': 'Temperature', 'type': 'temperature', 'unit': '°C'}
+                ]
+            }
+        ]
     },
-    "Evening Mode": {
-        "description": "Comfortable evening settings",
-        "type": "standard",
-        "devices": ["Environmental Monitor", "Light Control", "Security System", "Safety Monitor"],
-        "transitions": ["Night Mode", "Entertainment Mode", "Guest Mode"],
-        "sensor_adjustments": {
-            "temperature": {"offset": -2, "variation": 1},
-            "motion": {"probability": 0.2},
-            "energy": {"factor": 0.9}
-        },
-        "is_active": False
+    'Evening Mode': {
+        'type': 'standard',
+        'room_type': 'living_room',
+        'description': 'Comfortable evening settings',
+        'devices': [
+            {
+                'name': 'Light Control',
+                'type': 'lighting',
+                'sensors': [
+                    {'name': 'Light Level', 'type': 'light', 'unit': 'lux'},
+                    {'name': 'Color Temperature', 'type': 'color_temp', 'unit': 'K'}
+                ]
+            }
+        ]
     },
-    "Night Mode": {
-        "description": "Settings for sleep and minimal activity",
-        "type": "night",
-        "devices": ["Environmental Monitor", "Security System"],
-        "rooms": ["bedroom"],
-        "transitions": ["Morning Routine", "Away Mode"],
-        "sensor_adjustments": {
-            "temperature": {"offset": -4, "variation": 0.5},
-            "motion": {"probability": 0.01},
-            "energy": {"factor": 0.5}
-        },
-        "is_active": False
+    'Night Mode': {
+        'type': 'night',
+        'room_type': 'bedroom',
+        'description': 'Settings for sleep and minimal activity',
+        'devices': [
+            {
+                'name': 'Security System',
+                'type': 'security',
+                'sensors': [
+                    {'name': 'Motion', 'type': 'motion'},
+                    {'name': 'Door Status', 'type': 'contact'}
+                ]
+            }
+        ]
     },
-    "Away Mode": {
-        "description": "Energy-saving and security settings when no one is home",
-        "type": "security",
-        "devices": ["Environmental Monitor", "Security System", "Safety Monitor"],
-        "rooms": ["living_room", "bedroom", "kitchen", "office", "garage"],
-        "transitions": ["Home", "Morning Routine", "Day Mode", "Evening Mode", "Night Mode"],
-        "sensor_adjustments": {
-            "temperature": {"offset": -5, "variation": 2},
-            "motion": {"probability": 0.0},
-            "energy": {"factor": 0.3}
-        },
-        "is_active": False
+    'Away Mode': {
+        'type': 'security',
+        'rooms': ['living_room', 'garage', 'bedroom'],
+        'description': 'Whole-home security scenario',
+        'devices': [
+            {
+                'device': 'Security System',
+                'sensors': ['Motion', 'Door Status'],
+                'rooms': ['living_room', 'garage', 'bedroom']
+            }
+        ]
     },
-    "Work From Home": {
-        "description": "Settings optimized for working from home",
-        "type": "work",
-        "devices": ["Environmental Monitor", "Light Control", "Security System", "Safety Monitor"],
-        "rooms": ["office", "living_room"],
-        "transitions": ["Day Mode", "Evening Mode"],
-        "sensor_adjustments": {
-            "temperature": {"offset": 1, "variation": 1},
-            "motion": {"probability": 0.2},
-            "energy": {"factor": 1.1}
-        },
-        "is_active": False
+    'Work From Home': {
+        'type': 'work',
+        'room_type': 'office',
+        'description': 'Settings optimized for working from home',
+        'devices': [
+            {
+                'name': 'Environmental Monitor',
+                'type': 'environmental',
+                'sensors': [
+                    {'name': 'Temperature', 'type': 'temperature', 'unit': '°C'}
+                ]
+            }
+        ]
     },
-    "Entertainment Mode": {
-        "description": "Settings for watching movies or entertainment",
-        "type": "entertainment",
-        "devices": ["Light Control", "Environmental Monitor"],
-        "rooms": ["living_room"],
-        "transitions": ["Evening Mode", "Night Mode"],
-        "sensor_adjustments": {
-            "temperature": {"offset": -1, "variation": 0.5},
-            "motion": {"probability": 0.15},
-            "energy": {"factor": 0.7}
-        },
-        "is_active": False
+    'Entertainment Mode': {
+        'type': 'entertainment',
+        'room_type': 'living_room',
+        'description': 'Settings for watching movies or entertainment',
+        'devices': [
+            {
+                'name': 'Light Control',
+                'type': 'lighting',
+                'sensors': [
+                    {'name': 'Light Level', 'type': 'light', 'unit': 'lux'}
+                ]
+            }
+        ]
     },
-    "Guest Mode": {
-        "description": "Comfortable settings for guests",
-        "type": "guest",
-        "devices": ["Environmental Monitor", "Light Control"],
-        "rooms": ["living_room", "bedroom", "guest_room"],
-        "transitions": ["Day Mode", "Evening Mode", "Night Mode"],
-        "sensor_adjustments": {
-            "temperature": {"offset": 1, "variation": 1.5},
-            "motion": {"probability": 0.4},
-            "energy": {"factor": 1.2}
-        },
-        "is_active": False
+    'Guest Mode': {
+        'type': 'guest',
+        'room_type': 'living_room',
+        'description': 'Comfortable settings for guests',
+        'devices': [
+            {
+                'name': 'Environmental Monitor',
+                'type': 'environmental',
+                'sensors': [
+                    {'name': 'Temperature', 'type': 'temperature', 'unit': '°C'}
+                ]
+            }
+        ]
     },
-    "Emergency Mode": {
-        "description": "Highest security and safety settings",
-        "type": "emergency",
-        "devices": ["Security System", "Safety Monitor", "Environmental Monitor"],
-        "rooms": ["living_room", "bedroom", "kitchen", "office", "garage"],
-        "transitions": [],
-        "sensor_adjustments": {
-            "temperature": {"offset": -3, "variation": 3},
-            "motion": {"probability": 0.6},
-            "energy": {"factor": 1.0}
-        },
-        "is_active": False
+    'Emergency Mode': {
+        'type': 'emergency',
+        'room_type': 'living_room',
+        'description': 'Highest security and safety settings',
+        'devices': [
+            {
+                'name': 'Security System',
+                'type': 'security',
+                'sensors': [
+                    {'name': 'Motion', 'type': 'motion'},
+                    {'name': 'Door Status', 'type': 'contact'}
+                ]
+            }
+        ]
     },
-    "Eco Mode": {
-        "description": "Maximum energy saving settings",
-        "type": "efficiency",
-        "devices": ["Environmental Monitor", "Light Control"],
-        "rooms": ["living_room", "bedroom", "kitchen"],
-        "transitions": ["Day Mode", "Away Mode", "Night Mode"],
-        "sensor_adjustments": {
-            "temperature": {"offset": -4, "variation": 1},
-            "motion": {"probability": 0.05},
-            "energy": {"factor": 0.2}
-        },
-        "is_active": False
+    'Eco Mode': {
+        'type': 'efficiency',
+        'room_type': 'living_room',
+        'description': 'Maximum energy saving settings',
+        'devices': [
+            {
+                'name': 'Environmental Monitor',
+                'type': 'environmental',
+                'sensors': [
+                    {'name': 'Temperature', 'type': 'temperature', 'unit': '°C'}
+                ]
+            }
+        ]
     },
-    "Party Mode": {
-        "description": "Social gathering settings",
-        "type": "comfort",
-        "devices": ["Environmental Monitor", "Light Control", "Security System"],
-        "rooms": ["living_room", "kitchen"],
-        "transitions": ["Evening Mode", "Night Mode"],
-        "sensor_adjustments": {
-            "temperature": {"offset": 2, "variation": 2},
-            "motion": {"probability": 0.7},
-            "energy": {"factor": 1.5}
-        },
-        "is_active": False
+    'Party Mode': {
+        'type': 'comfort',
+        'room_type': 'living_room',
+        'description': 'Social gathering settings',
+        'devices': [
+            {
+                'name': 'Light Control',
+                'type': 'lighting',
+                'sensors': [
+                    {'name': 'Light Level', 'type': 'light', 'unit': 'lux'}
+                ]
+            }
+        ]
     }
 }
 

@@ -30,6 +30,7 @@ class Device(BaseModel):
     created_at: Mapped[Optional[datetime]] = Column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[Optional[datetime]] = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     room_id = Column(Integer, ForeignKey('rooms.id'))
+    update_counter: Mapped[int] = Column(Integer, default=0)  # Track number of updates
     
     # Relationships
     container: Mapped[Optional["Container"]] = relationship(
@@ -56,6 +57,11 @@ class Device(BaseModel):
         self.icon = icon
         self.room = room
         self.container = container
+        
+        logger.debug(f"Created device '{self.name}' (ID: {self.id}) with: "
+                     f"Room: {room.name if room else 'None'}, "
+                     f"Container: {container.name if container else 'None'}")
+        
         # Set default values for other fields
         self.is_active = False
 

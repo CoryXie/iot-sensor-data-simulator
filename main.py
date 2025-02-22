@@ -33,47 +33,55 @@ logger.add("logs/app.log", rotation="500 MB", level="INFO")
 
 def create_intro_content():
     """Create modern introduction content"""
-    with ui.column().classes("w-full h-full p-8 space-y-8"):
-        # Hero Section
-        with ui.row().classes("w-full bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-2xl p-8 shadow-2xl"):
-            with ui.column().classes("space-y-4"):
-                ui.label("Smart Home Intelligence Platform").classes("text-4xl font-bold")
-                ui.label("Next Generation IoT Management System").classes("text-xl")
-                with ui.row().classes("space-x-4 mt-4"):
-                    ui.button("Get Started", icon="rocket", color="positive").classes("px-8 py-4")
-                    ui.button("Learn More", icon="info", color="white").classes("px-8 py-4 text-blue-600")
-            ui.image("https://cdn-icons-png.flaticon.com/512/1067/1067555.png").classes("w-64 h-64")
-
-        # Features Grid
-        with ui.grid(columns=3).classes("w-full gap-8"):
-            features = [
-                ("speed", "Real-time Monitoring", "Instant sensor data visualization"),
-                ("settings_input_hdmi", "Automation", "Smart scenario configurations"),
-                ("security", "Security", "Enterprise-grade protection"),
-                ("device_hub", "IoT Integration", "100+ supported devices"),
-                ("insights", "Analytics", "Advanced data insights"),
-                ("support_agent", "24/7 Support", "Always here to help")
-            ]
+    with ui.column().classes("w-full h-full p-4 gap-4"):
+        # Welcome card
+        with ui.card().classes("w-full p-6 bg-white shadow-lg rounded-xl"):
+            with ui.column().classes("gap-4"):
+                ui.label("Welcome to Smart Home IoT Platform").classes("text-2xl font-bold text-blue-600")
+                ui.label("""
+                    This platform provides comprehensive IoT device management and monitoring capabilities 
+                    for your smart home. Navigate through different sections using the tabs above.
+                """).classes("text-gray-600")
+        
+        # Quick links grid
+        with ui.grid(columns=3).classes("w-full gap-4"):
+            # Smart Home Card
+            with ui.card().classes("p-4 bg-white shadow hover:shadow-lg transition-shadow"):
+                ui.icon("home").classes("text-4xl text-blue-500")
+                ui.label("Smart Home").classes("text-lg font-bold mt-2")
+                ui.label("Monitor and control your smart home devices in real-time").classes("text-sm text-gray-600")
+                ui.button("Open", icon="arrow_forward", on_click=lambda: ui.open('/smart_home')).classes("mt-4")
             
-            for icon, title, desc in features:
-                with ui.card().classes("w-full p-6 transition-all hover:scale-105 hover:shadow-xl"):
-                    with ui.column().classes("items-center text-center space-y-4"):
-                        ui.icon(icon).classes("text-4xl text-blue-600")
-                        ui.label(title).classes("text-xl font-semibold")
-                        ui.label(desc).classes("text-gray-600")
-
-        # Stats Section
-        with ui.row().classes("w-full bg-gray-50 rounded-2xl p-8 justify-between"):
-            stats = [
-                ("1M+", "Devices Connected"),
-                ("99.9%", "Uptime Reliability"),
-                ("150+", "Supported Protocols"),
-                ("24/7", "Monitoring")
-            ]
-            for value, label in stats:
-                with ui.column().classes("items-center"):
-                    ui.label(value).classes("text-3xl font-bold text-blue-600")
-                    ui.label(label).classes("text-gray-500")
+            # Devices Card
+            with ui.card().classes("p-4 bg-white shadow hover:shadow-lg transition-shadow"):
+                ui.icon("devices").classes("text-4xl text-green-500")
+                ui.label("Devices").classes("text-lg font-bold mt-2")
+                ui.label("Manage all your IoT devices and their configurations").classes("text-sm text-gray-600")
+                ui.button("Open", icon="arrow_forward", on_click=lambda: ui.open('/devices')).classes("mt-4")
+            
+            # Sensors Card
+            with ui.card().classes("p-4 bg-white shadow hover:shadow-lg transition-shadow"):
+                ui.icon("sensors").classes("text-4xl text-purple-500")
+                ui.label("Sensors").classes("text-lg font-bold mt-2")
+                ui.label("View and analyze data from all connected sensors").classes("text-sm text-gray-600")
+                ui.button("Open", icon="arrow_forward", on_click=lambda: ui.open('/sensors')).classes("mt-4")
+        
+        # Features section
+        with ui.card().classes("w-full p-6 bg-white shadow-lg rounded-xl mt-4"):
+            ui.label("Key Features").classes("text-xl font-bold mb-4")
+            with ui.grid(columns=2).classes("gap-4"):
+                features = [
+                    ("Real-time Monitoring", "View live sensor data and device states", "monitoring"),
+                    ("Smart Scenarios", "Create and manage automated scenarios", "auto_mode"),
+                    ("Device Management", "Add, configure and control IoT devices", "device_hub"),
+                    ("Data Analytics", "Analyze sensor data and usage patterns", "analytics")
+                ]
+                for title, desc, icon in features:
+                    with ui.row().classes("items-center gap-4 p-4 rounded-lg bg-gray-50"):
+                        ui.icon(icon).classes("text-2xl text-blue-500")
+                        with ui.column():
+                            ui.label(title).classes("font-bold")
+                            ui.label(desc).classes("text-sm text-gray-600")
 
 def init():
     """Initialize the application"""
@@ -89,43 +97,33 @@ def init():
     # Create routes
     @ui.page('/')
     def home():
-        """Main application page with tabs"""
-        # Create page instances
-        smart_home_page = SmartHomePage()
-        containers_page = ContainersPage(iot_hub_helper=iot_hub_helper)
-        devices_page = DevicesPage(iot_hub_helper=iot_hub_helper)
-        sensors_page = SensorsPage(iot_hub_helper=iot_hub_helper)
-
-        # Main layout
+        """Create the main application page with navigation tabs"""
         with ui.column().classes('w-full min-h-screen bg-gray-50'):
-            # Navigation tabs
-            with ui.tabs().classes('w-full bg-white rounded-lg shadow-sm') as tabs:
-                intro_tab = ui.tab('Introduction').classes('px-6 py-3')
-                ui.tab('Smart Home').classes('px-6 py-3')
-                ui.tab('Containers').classes('px-6 py-3')
-                ui.tab('Devices').classes('px-6 py-3') 
-                ui.tab('Sensors').classes('px-6 py-3')
-            
-            # Tab content panels
-            with ui.tab_panels(tabs, value=intro_tab).classes('w-full h-full'):
-                # Introduction page
-                with ui.tab_panel(intro_tab).classes('p-4 bg-white rounded-lg shadow-sm'):
+            # Create page instances
+            smart_home_page = SmartHomePage()
+            containers_page = ContainersPage(iot_hub_helper=iot_hub_helper)
+            devices_page = DevicesPage(iot_hub_helper=iot_hub_helper)
+            sensors_page = SensorsPage(iot_hub_helper=iot_hub_helper)
+
+            # Navigation tabs at the top
+            with ui.tabs().classes('w-full') as tabs:
+                ui.tab('Introduction').props('default')
+                ui.tab('Smart Home')
+                ui.tab('Containers')
+                ui.tab('Devices')
+                ui.tab('Sensors')
+        
+            # Tab panels below
+            with ui.tab_panels(tabs).classes('w-full'):
+                with ui.tab_panel('Introduction'):
                     create_intro_content()
-                
-                # Smart Home Dashboard
-                with ui.tab_panel('Smart Home').classes('p-4 bg-white rounded-lg shadow-sm'):
+                with ui.tab_panel('Smart Home'):
                     smart_home_page.create_content()
-                
-                # Container Management
-                with ui.tab_panel('Containers').classes('p-4 bg-white rounded-lg shadow-sm'):
+                with ui.tab_panel('Containers'):
                     containers_page.create_content()
-                
-                # Device Configuration
-                with ui.tab_panel('Devices').classes('p-4 bg-white rounded-lg shadow-sm'):
+                with ui.tab_panel('Devices'):
                     devices_page.create_content()
-                
-                # Sensor Monitoring
-                with ui.tab_panel('Sensors').classes('p-4 bg-white rounded-lg shadow-sm'):
+                with ui.tab_panel('Sensors'):
                     sensors_page.create_content()
 
     @ui.page('/debug_sensors')

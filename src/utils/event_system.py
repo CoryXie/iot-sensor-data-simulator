@@ -1,6 +1,9 @@
 from typing import List, Callable, Any
 from datetime import datetime, timedelta
 from loguru import logger
+from collections import defaultdict
+from threading import Lock
+import asyncio
 
 class EventTrigger:
     """Class representing a trigger condition for an event"""
@@ -58,47 +61,67 @@ class SmartHomeEvent:
         return False
 
 class EventSystem:
-    """Event system for handling component communication"""
+    """Event system for handling sensor updates and other events"""
+    
+    _instance = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
     
     def __init__(self):
-        """Initialize event system with empty subscribers"""
-        self.subscribers = {}
-        self._events = {}
-        logger.info("EventSystem initialized")
-
-    def subscribe(self, event_type: str, callback: callable):
-        """Subscribe to an event type with a callback"""
-        if event_type not in self.subscribers:
-            self.subscribers[event_type] = []
-        self.subscribers[event_type].append(callback)
-        logger.debug(f"Subscribed to {event_type} events")
-
-    def emit(self, event_type: str, data: dict):
-        """Emit an event to all subscribers"""
-        if event_type in self.subscribers:
-            for callback in self.subscribers[event_type]:
+        if not hasattr(self, 'initialized'):
+            self.initialized = True
+            self.handlers = {}
+            self.logger = logger
+            self._events = []
+            self._lock = Lock()
+            
+    async def emit(self, event_type: str, data: dict):
+        """Emit an event to all registered handlers"""
+        if event_type in self.handlers:
+            for handler in self.handlers[event_type]:
                 try:
-                    callback(data)
+                    if asyncio.iscoroutinefunction(handler):
+                        # If handler is async, await it directly
+                        await handler(data)
+                    else:
+                        # If handler is sync, run it in the default executor
+                        loop = asyncio.get_running_loop()
+                        await loop.run_in_executor(None, handler, data)
                 except Exception as e:
-                    logger.error(f"Event callback error: {str(e)}")
-        logger.debug(f"Emitted {event_type} event")
-
+                    self.logger.error(f"Error in event handler for {event_type}: {str(e)}")
+                    self.logger.debug(f"Handler: {handler.__name__}, Data: {data}")
+    
+    def on(self, event_type: str, handler):
+        """Register an event handler"""
+        if event_type not in self.handlers:
+            self.handlers[event_type] = []
+        if handler not in self.handlers[event_type]:
+            self.handlers[event_type].append(handler)
+            
+    def off(self, event_type: str, handler):
+        """Remove an event handler"""
+        if event_type in self.handlers and handler in self.handlers[event_type]:
+            self.handlers[event_type].remove(handler)
+            
     def add_event(self, event: SmartHomeEvent):
         """Add an event to the system"""
-        self.events.append(event)
+        self._events.append(event)
         logger.info(f"Added event to system: {event.name}")
         
     def add_emergency(self, event: SmartHomeEvent):
         """Add an emergency event to the system"""
         event.severity = 'emergency'
-        self.emergency_events.append(event)
+        self._events.append(event)
         logger.info(f"Added emergency event to system: {event.name}")
         
     def process_sensor_update(self, sensor_type: int, value: float, room_type: str = None):
         """Process a sensor update and check for triggered events"""
         try:
             # Check regular events
-            for event in self.events:
+            for event in self._events:
                 for trigger in event.triggers:
                     if trigger.sensor_type == sensor_type:
                         if room_type and trigger.target_type and trigger.target_type != room_type:
@@ -108,7 +131,7 @@ class EventSystem:
                             event.trigger()
             
             # Check emergency events
-            for event in self.emergency_events:
+            for event in self._events:
                 for trigger in event.triggers:
                     if trigger.sensor_type == sensor_type:
                         if room_type and trigger.target_type and trigger.target_type != room_type:
@@ -125,7 +148,7 @@ class EventSystem:
     def _cleanup_expired_events(self):
         """Clean up expired events"""
         try:
-            for event in self.events + self.emergency_events:
+            for event in self._events:
                 if event.check_expiration():
                     logger.debug(f"Cleaned up expired event: {event.name}")
         except Exception as e:
@@ -133,19 +156,4 @@ class EventSystem:
     
     def get_active_emergencies(self) -> List[SmartHomeEvent]:
         """Get list of active emergency events"""
-        return [event for event in self.emergency_events if event.is_active]
-
-    def on(self, event_name: str):
-        """Decorator to register event handlers"""
-        def decorator(func):
-            self._events.setdefault(event_name, []).append(func)
-            return func
-        return decorator
-    
-    def trigger(self, event_name: str, *args, **kwargs):
-        """Trigger all handlers for an event"""
-        for handler in self._events.get(event_name, []):
-            try:
-                handler(*args, **kwargs)
-            except Exception as e:
-                print(f"Error handling event {event_name}: {str(e)}") 
+        return [event for event in self._events if event.is_active]

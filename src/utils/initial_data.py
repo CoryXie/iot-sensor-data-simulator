@@ -30,79 +30,108 @@ def initialize_rooms():
             logger.error(f"Error initializing rooms: {e}")
             raise
 
-# Comment out or delete the entire initialize_rooms_with_sensors function
-# def initialize_rooms_with_sensors():
-#     """Initialize rooms with their devices and sensors"""
-#     db = SessionLocal()
-#     try:
-#         # Define rooms
-#         rooms = [
-#             Room(name='Living Room', room_type='living_room'),
-#             Room(name='Kitchen', room_type='kitchen'),
-#             Room(name='Bedroom', room_type='bedroom'),
-#             Room(name='Bathroom', room_type='bathroom'),
-#             Room(name='Office', room_type='office'),
-#             Room(name='Garage', room_type='garage')
-#         ]
-#         db.add_all(rooms)
-#         db.commit()
-#         logger.info("Created rooms successfully")
-#         # ... rest of the function ...
-#     except Exception as e:
-#         db.rollback()
-#         logger.error(f"Error initializing rooms: {str(e)}")
-#         raise
-#     finally:
-#         db.close()
-
 def initialize_scenarios():
-    """Initialize scenarios from templates"""
-    with SessionLocal() as session:
-        # Clear existing data
-        session.query(Container).delete()
-        session.query(Scenario).delete()
-        
-        for scenario_name, config in SCENARIO_TEMPLATES.items():
-            # Create scenario
-            scenario = Scenario(
-                name=scenario_name,
-                scenario_type=config['type'],
-                description=config['description'],
-                is_active=config.get('is_active', False)
-            )
+    """Initialize scenarios with multi-room support"""
+    with db_session() as session:
+        try:
+            # Clear existing data
+            session.query(Container).delete()
+            session.query(Scenario).delete()
             
-            # Create container with unique name
-            container = Container(
-                name=f"{scenario_name} Container - {uuid.uuid4().hex[:6]}",
-                container_type='scenario',
-                description=f"Container for {scenario_name} scenario",
-                interval=config.get('interval', 5)
-            )
+            # Track existing devices to avoid duplicates
+            existing_devices = {
+                (d.room.name, d.name.replace(d.room.name + " ", "")): d
+                for d in session.query(Device).all()
+            }
             
-            # Create devices for this container
-            devices = []
-            for device_type in config['devices']:
-                device = Device(
-                    name=f"{scenario_name} {device_type}",
-                    type=device_type
+            for scenario_name, template in SCENARIO_TEMPLATES.items():
+                # Validate template structure
+                required_fields = ['type', 'description', 'devices']
+                if not all(field in template for field in required_fields):
+                    missing = [f for f in required_fields if f not in template]
+                    logger.error(f"Scenario '{scenario_name}' missing required fields: {', '.join(missing)}")
+                    continue
+                
+                # Handle both new and legacy template formats
+                rooms = template.get('rooms', [])
+                if 'room_type' in template:  # Legacy support
+                    rooms = [template['room_type']]
+                
+                if not rooms:
+                    logger.error(f"Scenario '{scenario_name}' has no rooms defined")
+                    continue
+                
+                # Create scenario
+                scenario = Scenario(
+                    name=scenario_name,
+                    scenario_type=template['type'],
+                    description=template['description']
                 )
-                device.is_active = True  # Set after creation
+                session.add(scenario)
+                session.flush()
+
+                # Create containers for each room in the scenario
+                for room_type in rooms:
+                    room = session.query(Room).filter_by(room_type=room_type).first()
+                    if not room:
+                        logger.error(f"Room type {room_type} not found for scenario {scenario_name}")
+                        continue
+                    
+                    # Create room-specific container with UUID for uniqueness
+                    container = Container(
+                        name=f"{scenario_name} - {room.name} - {str(uuid.uuid4())[:8]}",
+                        description=f"{scenario_name} in {room.name}",
+                        location=room.name,
+                        scenario=scenario
+                    )
+                    session.add(container)
+                    session.flush()
+
+                    # Create or reuse devices for this room-container combination
+                    for device_template in template['devices']:
+                        # Support both new and legacy device formats
+                        device_name = device_template.get('device') or device_template.get('name')
+                        device_type = DEVICE_TEMPLATES.get(device_name, {}).get('type')
+                        
+                        if not device_type:
+                            logger.error(f"Invalid device template: {device_name}")
+                            continue
+                        
+                        # Check if device belongs in this room
+                        device_rooms = device_template.get('rooms', [])
+                        if 'room_type' in device_template:  # Legacy support
+                            device_rooms = [device_template['room_type']]
+                        
+                        if device_rooms and room_type not in device_rooms:
+                            continue
+                        
+                        # Check if device already exists
+                        device_key = (room.name, device_name)
+                        if device_key in existing_devices:
+                            # Update container reference for existing device
+                            device = existing_devices[device_key]
+                            device.container = container
+                            session.add(device)
+                        else:
+                            # Create new device
+                            device = Device(
+                                name=f"{room.name} {device_name}",
+                                type=device_type,
+                                room=room,
+                                container=container
+                            )
+                            session.add(device)
+                            session.commit()
+                            existing_devices[device_key] = device
                 
-                # Add sensors based on device type
-                if device_type in DEVICE_TEMPLATES:
-                    for sensor_config in DEVICE_TEMPLATES[device_type]['sensors']:
-                        sensor = Sensor(**sensor_config)
-                        device.sensors.append(sensor)
-                
-                devices.append(device)
+                logger.debug(f"Created scenario '{scenario_name}' spanning {len(rooms)} rooms")
             
-            container.devices = devices
-            scenario.containers.append(container)
-            
-            session.add(scenario)
-        
-        session.commit()
-    logger.success("Scenarios initialized from templates")
+            session.commit()
+            logger.success("Multi-room scenarios initialized successfully")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Scenario initialization failed: {e}")
+            raise
 
 def initialize_options():
     """Initialize default options if not already set"""
@@ -128,46 +157,61 @@ def initialize_options():
 def initialize_devices_and_sensors():
     with SessionLocal() as session:
         try:
+            # Clear existing data
             session.query(Sensor).delete()
             session.query(Device).delete()
+            
+            # Track created devices to avoid duplicates
+            created_devices = {}  # (room_name, device_name) -> device
             
             for room_name, template in ROOM_TEMPLATES.items():
                 room = session.query(Room).filter_by(name=room_name).first()
                 if not room:
+                    logger.error(f"Room {room_name} not found during device initialization")
                     continue
                 
                 for device_name in template['devices']:
                     device_template = DEVICE_TEMPLATES[device_name]
-                    # Create device with proper room association
+                    device_key = (room_name, device_name)
+                    
+                    # Skip if device already exists for this room
+                    if device_key in created_devices:
+                        continue
+                        
+                    # Create device with explicit room assignment
                     device = Device(
                         name=f"{room_name} {device_name}",
-                        type=device_template['type']
+                        type=device_template['type'],
+                        room=room  # Direct relationship assignment
                     )
-                    device.room = room  # Set relationship
                     session.add(device)
-                    session.flush()
+                    session.commit()  # Generate ID before accessing
+                    session.flush()  # Ensure device ID is generated
                     
-                    # Create sensors and link to room
+                    # Store reference to created device
+                    created_devices[device_key] = device
+                    
+                    logger.debug(f"Created device {device.name} (ID: {device.id}) "
+                                f"in room {room.name} (ID: {room.id})")
+                    
+                    # Create sensors
                     for sensor_template in device_template['sensors']:
                         sensor = Sensor(
                             name=sensor_template['name'],
                             type=sensor_template['type'],
                             unit=sensor_template.get('unit'),
-                            min_value=sensor_template.get('min_value', 0),
-                            max_value=sensor_template.get('max_value', 100),
-                            variation_range=sensor_template.get('variation_range', 1.0),
-                            change_rate=sensor_template.get('change_rate', 0.1),
-                            interval=sensor_template.get('interval', 5),
-                            room=room  # Now matches constructor
+                            device=device,  # Direct device assignment
+                            room=room      # Explicit room assignment
                         )
-                        sensor.device = device
                         session.add(sensor)
+                        logger.debug(f"Created sensor {sensor.name} (ID: None) "
+                                    f"for device {device.name}")
             
             session.commit()
             logger.success("Devices and sensors initialized with proper relationships")
         except Exception as e:
             session.rollback()
-            logger.error(f"Device/sensor initialization failed: {e}")
+            logger.error(f"Device and sensor initialization failed: {e}")
             raise
 
 def initialize_all_data():

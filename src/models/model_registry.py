@@ -2,14 +2,14 @@
 from loguru import logger
 from src.database import Base, engine
 from src.models.options import Options  # (if needed)
-from src.models.room import Room
 from src.models.device import Device
 from src.models.sensor import Sensor
 from src.models.container import Container
 from src.models.base_model import BaseModel  # single source for the base model
-from src.models.scenario import Scenario
 from src.models.option import Option
 from src.models.schedule import Schedule
+from src.models.scenario import Scenario
+from src.models.room import Room
 
 def register_models():
     """Register all models using SQLAlchemy's automatic table creation"""
