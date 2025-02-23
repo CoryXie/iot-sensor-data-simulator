@@ -1,6 +1,6 @@
 import random
-from datetime import datetime
-from typing import Dict
+from datetime import datetime, timezone
+from typing import Dict, Optional
 from loguru import logger
 from src.models.device import Device
 from src.models.sensor import Sensor
@@ -16,7 +16,10 @@ import os
 import subprocess
 from src.models.scenario import Scenario
 from src.constants.device_templates import ROOM_TEMPLATES
+from src.models.environmental_factors import WeatherCondition, EnvironmentalState, Location, SimulationTime, get_sensor_value_modifier, WeatherImpactFactors
 import asyncio
+import math
+from src.services.weather_service import WeatherService, LocationQuery, LocationType
 
 class SmartHomeSimulator:
     """Class to handle smart home sensor value simulation"""
@@ -44,9 +47,23 @@ class SmartHomeSimulator:
         self.base_values = {}
         self.device_simulators = {}
         self.sensor_simulators = {}
+        self.weather_forecast = {}  # Store weather forecast data
         self.broker_address = os.getenv('MQTT_BROKER_ADDRESS', 'localhost')
         self.broker_port = int(os.getenv('MQTT_BROKER_PORT', 1883))
         self.simulation_interval = 5
+        
+        # Initialize weather service
+        self.weather_service = WeatherService()
+        
+        # Environmental state
+        self.current_weather = WeatherCondition.SUNNY
+        self.current_location = Location(
+            country="United States",
+            region="San Francisco",
+            timezone="America/Los_Angeles"
+        )
+        self.simulation_time = SimulationTime(datetime.now())
+        self.env_state = self._create_environmental_state()
         
         # Configure MQTT client with environment variables
         self.client = mqtt.Client(
@@ -328,115 +345,144 @@ class SmartHomeSimulator:
         logger.debug(f"Started simulation for sensor {sensor.name}")
 
     def _simulate_sensor(self, sensor: Sensor):
-        """Simulate sensor values with proper relationship loading"""
-        try:
-            with db_session() as init_session:
-                # Load sensor with device and room relationships
-                current_sensor = init_session.query(Sensor).options(
-                    joinedload(Sensor.device).joinedload(Device.room)
-                ).filter_by(id=sensor.id).one()
-                
-                logger.info(f"Sensor '{current_sensor.name}' (ID: {current_sensor.id}) "
-                          f"mapped to device '{current_sensor.device.name if current_sensor.device else 'None'}' "
-                          f"in room '{current_sensor.device.room.name if current_sensor.device and current_sensor.device.room else 'None'}")
-
-            while True:
-                with db_session() as session:
-                    # Refresh with full relationships
-                    current_sensor = session.query(Sensor).options(
-                        joinedload(Sensor.device).joinedload(Device.room)
-                    ).filter_by(id=sensor.id).one()
+        """Simulate sensor readings"""
+        with self.db() as session:
+            while self.running and sensor.id in self.sensor_threads:
+                try:
+                    # Refresh sensor to ensure relationships are loaded
+                    session.refresh(sensor)
                     
-                    # Access through fully loaded relationships
-                    device = current_sensor.device
-                    room = device.room if device else None
-                    
-                    logger.debug(f"Sensor [ID:{current_sensor.id}] hierarchy: "
-                                f"{current_sensor.type} -> {device.name if device else 'None'} -> "
-                                f"{room.name if room else 'None'}")
-                    
-                    # Rest of simulation logic using room.name instead of room_type
-                    base_value = self._get_sensor_base_value(
-                        current_sensor.type.lower(),
-                        room.room_type if room else "default"
-                    )
-                    sensor_interval = current_sensor.interval
+                    # Get location from container or room
+                    location = None
+                    if sensor.container_id:
+                        container = session.query(Container).get(sensor.container_id)
+                        if container:
+                            location = container.location
+                    elif sensor.room_id:
+                        room = session.query(Room).get(sensor.room_id)
+                        if room:
+                            location = room.room_type
+                        
+                    if not location:
+                        logger.warning(f"Sensor {sensor.id} ({sensor.name}) has no location")
+                        time.sleep(self.simulation_interval)
+                        continue
+                        
+                    # Rest of simulation logic...
+                    if not hasattr(sensor, '_simulator'):
+                        sensor._simulator = self._create_simulator(sensor)
 
-                    # Calculate and update value
-                    current_value = self._calculate_sensor_value(
-                        current_sensor.type.lower(), 
-                        base_value,
-                        room.room_type if room else "default"
-                    )
-                    current_sensor.current_value = current_value
-                    session.commit()
-
-                    # Prepare publish data
-                    publish_data = {
-                        'sensor_id': current_sensor.id,
-                        'value': current_value,
-                        'sensor_type': current_sensor.type,
-                        'device_name': device.name if device else "Unknown",
-                        'location': room.name if room else "Unknown"
+                    value = sensor._simulator.next_value()
+                    
+                    # Update the sensor's current value
+                    sensor.current_value = value
+                    session.add(sensor)
+                    
+                    # Create sensor data payload
+                    sensor_data = {
+                        'id': sensor.id,
+                        'name': sensor.name or f'sensor_{sensor.id}',
+                        'type': sensor.type,
+                        'value': value,
+                        'unit': sensor.unit,
+                        'timestamp': self.simulation_time.effective_time.isoformat(),
+                        'device_id': sensor.device_id,
+                        'location': location,
+                        'weather': self.current_weather.value,
+                        'region': self.current_location.region
                     }
+                    
+                    # Publish to MQTT
+                    self._publish_sensor_data(sensor_data)
+                    
+                    # Sleep for simulation interval
+                    time.sleep(self.simulation_interval)
+                    
+                except Exception as e:
+                    logger.error(f"Error simulating sensor {sensor.id}: {str(e)}")
+                    time.sleep(self.simulation_interval)
 
-                # Operations outside session context
-                device_name = device.name.lower().replace(' ', '_')
-                location = device.location.lower().replace(' ', '_')
-                sensor_type = sensor.name.lower().replace(' ', '_')
-                topic = f"smart_home/{location}/{device_name}/{sensor_type}"
-                
-                message_data = {
-                    "id": sensor.id,
-                    "type": sensor.name,
-                    "value": sensor.current_value,
-                    "unit": sensor.unit,
-                    "device": device.name,
-                    "location": device.location,
-                    "timestamp": datetime.now().isoformat()
-                }
-                self.publish_sensor_data(topic, message_data)
-                time.sleep(sensor_interval)
+    def update_environmental_state(
+        self,
+        weather: WeatherCondition,
+        location: Location,
+        simulation_time: SimulationTime
+    ):
+        """Update environmental state with new conditions"""
+        self.current_weather = weather
+        self.current_location = location
+        self.simulation_time = simulation_time
+        self.env_state = self._create_environmental_state()
+        logger.info(
+            f"Updated environmental state: {location.region}, {weather.value}, "
+            f"Time: {simulation_time.effective_time.strftime('%H:%M')}"
+        )
 
-        except Exception as e:
-            logger.error(f"Sensor [ID:{current_sensor.id}] error: {str(e)}")
-            self._stop_sensor_simulation_by_id(current_sensor.id)
+    def _create_environmental_state(self) -> EnvironmentalState:
+        """Create environmental state from current settings"""
+        return EnvironmentalState.create_default(
+            self.current_weather,
+            self.simulation_time.effective_time,
+            self.current_location
+        )
 
-    def _calculate_sensor_value(self, sensor_type: str, base_value: float, room_type: str) -> float:
-        """Calculate sensor value with validation"""
-        try:
-            # Validate base value
-            base = float(base_value) if base_value is not None else 20.0
+    def _generate_sensor_value(self, sensor: Sensor) -> float:
+        """Generate a sensor value based on sensor type and environmental conditions"""
+        base_ranges = {
+            'temperature': (18, 25),  # Celsius
+            'humidity': (30, 60),     # Percent
+            'light': (0, 100),        # Percent
+            'motion': (0, 1),         # Binary
+            'air_quality': (0, 100),  # AQI
+            'pressure': (980, 1020),  # hPa
+            'noise': (30, 70),        # dB
+            'water_level': (0, 100),  # Percent
+            'smoke': (0, 50),         # PPM
+            'co2': (400, 1000),       # PPM
+        }
+        
+        sensor_type = sensor.type.lower()
+        if sensor_type not in base_ranges:
+            sensor_type = 'temperature'  # Default to temperature if type not found
             
-            # Add more randomness to make values change more visibly
-            if sensor_type == 'temperature':
-                variation = random.uniform(-3.0, 3.0) + self._get_scenario_variation(sensor_type)
-                return round(base + variation, 1)
-            elif sensor_type == 'humidity':
-                variation = random.uniform(-8.0, 8.0)
-                return max(0.0, min(100.0, base + variation))
-            elif sensor_type == 'motion':
-                return 1.0 if random.random() < (0.3 + self._get_scenario_variation(sensor_type)) else 0.0
-            elif sensor_type in ['co', 'smoke']:
-                return random.uniform(0.0, 15.0)
-            elif sensor_type == 'light':
-                return max(0.0, base + random.uniform(-100.0, 100.0))
-            return float(base)
-        except Exception as e:
-            logger.warning(f"Value calculation error, using default: {str(e)}")
-            return 20.0  # Fallback default
+        base_min, base_max = base_ranges[sensor_type]
+        
+        # Get environmental modifier
+        env_modifier = get_sensor_value_modifier(self.env_state, sensor_type)
+        
+        # Generate base value
+        base_value = random.uniform(base_min, base_max)
+        
+        # Apply environmental modifier
+        modified_value = base_value * env_modifier
+        
+        # Add time-based variations
+        if sensor_type in ['temperature', 'humidity', 'light']:
+            time_variation = self._get_time_based_variation(sensor_type)
+            modified_value += time_variation
+        
+        # Ensure value stays within reasonable bounds
+        return max(base_min, min(base_max, modified_value))
 
-    def _stop_sensor_simulation(self, sensor):
-        """Stop sensor using ID from database session"""
-        with db_session() as session:
-            current_sensor = session.merge(sensor)
-            self._stop_sensor_simulation_by_id(current_sensor.id)
-
-    def _stop_sensor_simulation_by_id(self, sensor_id: int):
-        """Thread-safe sensor stopping by ID"""
-        if sensor_id in self.sensor_threads:
-            del self.sensor_threads[sensor_id]
-            logger.debug(f"Stopped simulation for sensor ID: {sensor_id}")
+    def _get_time_based_variation(self, sensor_type: str) -> float:
+        """Get time-based variation for sensor values"""
+        hour = self.simulation_time.effective_time.hour
+        
+        if sensor_type == 'temperature':
+            # Temperature peaks in afternoon, lowest at night
+            return 5 * math.sin((hour - 6) * math.pi / 12)  # Peak at 15:00
+            
+        elif sensor_type == 'humidity':
+            # Humidity highest in early morning, lowest in afternoon
+            return -10 * math.sin((hour - 6) * math.pi / 12)  # Peak at 03:00
+            
+        elif sensor_type == 'light':
+            # Light follows sun pattern
+            if 6 <= hour <= 18:  # Daytime
+                return 20 * math.sin((hour - 6) * math.pi / 12)  # Peak at noon
+            return 0  # Night time
+            
+        return 0.0
 
     def start_container(self, container):
         """Start all sensors in a container"""
@@ -455,62 +501,17 @@ class SmartHomeSimulator:
                 self._stop_sensor_simulation(sensor)
         logger.info(f"Stopped container {container.name} sensors")
 
-    def _get_sensor_base_value(self, sensor_type: str, room_type: str) -> float:
-        """Get base value from templates with fallback defaults"""
-        try:
-            # First try sensor-specific base value
-            base_value = ROOM_TEMPLATES[room_type].get(f'base_{sensor_type}')
-            if base_value is not None:
-                return base_value
-            
-            # Fallback to general temperature base
-            return ROOM_TEMPLATES[room_type].get('base_temperature', 20.0)
-        except KeyError:
-            # Default values for unknown room types
-            return {
-                'temperature': 20.0,
-                'humidity': 50.0,
-                'motion': 0.0,
-                'light': 300.0,
-                'co': 0.0,
-                'smoke': 0.0
-            }.get(sensor_type, 0.0)
+    def _stop_sensor_simulation(self, sensor):
+        """Stop sensor using ID from database session"""
+        with db_session() as session:
+            current_sensor = session.merge(sensor)
+            self._stop_sensor_simulation_by_id(current_sensor.id)
 
-    def _generate_sensor_value(self, sensor: Sensor) -> float:
-        """Generate realistic sensor values based on type and previous value"""
-        # Define value ranges and change rates for each sensor type
-        ranges = {
-            "temperature": {"min": 18.0, "max": 28.0, "change": 0.5},  # Celsius
-            "humidity": {"min": 30.0, "max": 70.0, "change": 2.0},     # Percentage
-            "light": {"min": 0, "max": 1000, "change": 50},            # Lux
-            "motion": {"min": 0, "max": 1, "change": 1},               # Binary
-            "air_quality": {"min": 0, "max": 500, "change": 10},       # AQI
-            "default": {"min": 0, "max": 100, "change": 5}             # Generic
-        }
-        
-        sensor_range = ranges.get(sensor.type, ranges["default"])
-        
-        if sensor.current_value is None:
-            # Initial value
-            return random.uniform(sensor_range["min"], sensor_range["max"])
-        else:
-            # Generate change based on previous value
-            max_change = sensor_range["change"]
-            change = random.uniform(-max_change, max_change)
-            new_value = sensor.current_value + change
-            
-            # Ensure value stays within range
-            new_value = max(sensor_range["min"], min(sensor_range["max"], new_value))
-            
-            # Round appropriately based on sensor type
-            if sensor.type == "motion":
-                new_value = round(new_value)
-            elif sensor.type in ["temperature", "humidity"]:
-                new_value = round(new_value, 1)
-            else:
-                new_value = round(new_value)
-                
-            return new_value
+    def _stop_sensor_simulation_by_id(self, sensor_id: int):
+        """Thread-safe sensor stopping by ID"""
+        if sensor_id in self.sensor_threads:
+            del self.sensor_threads[sensor_id]
+            logger.debug(f"Stopped simulation for sensor ID: {sensor_id}")
 
     def start_simulation(self):
         """Starts the simulation loop."""
@@ -641,3 +642,88 @@ class SmartHomeSimulator:
             logger.error(f"Error updating sensor values: {e}")
             if 'session' in locals():
                 session.rollback()
+
+    async def update_weather_forecast(self, location: Location):
+        """Update weather forecast data"""
+        try:
+            # Get 3-day forecast
+            forecast = await self.weather_service.get_forecast(
+                LocationQuery(
+                    type=LocationType.CITY,
+                    value=f"{location.region}, {location.country}"
+                ),
+                days=3
+            )
+            
+            if forecast:
+                self.weather_forecast = forecast
+                logger.info(f"Updated weather forecast for {location.region}, {location.country}")
+                
+                # Notify event system about weather update
+                await self.event_system.emit_event(
+                    "weather_forecast_updated",
+                    {"forecast": forecast}
+                )
+        except Exception as e:
+            logger.error(f"Failed to update weather forecast: {e}")
+
+    def get_weather_adjusted_value(self, base_value: float, sensor_type: str, env_state: EnvironmentalState) -> float:
+        """Get weather-adjusted sensor value"""
+        # Get weather impact factors
+        impact_factors = WeatherImpactFactors.get_impact_factors(env_state.weather)
+        
+        # Apply specific modifiers based on sensor type
+        if sensor_type == "temperature":
+            return base_value + impact_factors.temperature_modifier
+        elif sensor_type == "humidity":
+            return min(100, max(0, base_value + impact_factors.humidity_modifier))
+        elif sensor_type == "light":
+            return min(100, max(0, base_value + impact_factors.light_level_modifier))
+        elif sensor_type == "air_quality":
+            return base_value + impact_factors.air_quality_modifier
+        elif sensor_type == "noise":
+            return base_value + impact_factors.noise_level_modifier
+        
+        return base_value
+
+    async def simulate_sensor_values(self, sensor: Sensor, env_state: EnvironmentalState) -> Dict:
+        """Simulate sensor values based on type and environmental conditions"""
+        base_value = self.base_values.get(sensor.id, self._get_base_value(sensor.type))
+        
+        # Get time-based modifier
+        time_modifier = get_sensor_value_modifier(env_state, sensor.type)
+        
+        # Apply weather adjustments
+        weather_adjusted = self.get_weather_adjusted_value(base_value, sensor.type, env_state)
+        
+        # Apply time modifier
+        final_value = weather_adjusted * time_modifier
+        
+        # Add some random variation (±5%)
+        variation = random.uniform(-0.05, 0.05) * final_value
+        final_value += variation
+        
+        # Ensure values stay within reasonable bounds
+        if sensor.type in ["humidity", "light"]:
+            final_value = min(100, max(0, final_value))
+        
+        # Store the new base value for next iteration
+        self.base_values[sensor.id] = final_value
+        
+        # Prepare sensor data
+        sensor_data = {
+            "sensor_id": sensor.id,
+            "type": sensor.type,
+            "value": round(final_value, 2),
+            "unit": sensor.unit,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "location": sensor.location,
+            "environmental_conditions": {
+                "weather": env_state.weather.value,
+                "temperature": env_state.temperature_celsius,
+                "humidity": env_state.humidity_percent,
+                "light_level": env_state.light_level_percent
+            }
+        }
+        
+        return sensor_data

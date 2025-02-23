@@ -1,0 +1,48 @@
+/* Device counter styles */
+.counter-chip {
+    position: absolute;
+    top: -0.5rem;
+    right: -0.5rem;
+    background-color: var(--primary);
+    color: white;
+    border-radius: 9999px;
+    min-width: 1.5rem;
+    height: 1.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    padding: 0 0.5rem;
+    z-index: 10;
+}
+
+/* Sensor value styles */
+.sensor-value {
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.25rem;
+    background-color: rgba(0, 0, 0, 0.05);
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.sensor-value:hover {
+    background-color: rgba(0, 0, 0, 0.1);
+}
+
+/* Device card styles */
+.device-card {
+    position: relative;
+    padding: 1rem;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+    border-radius: 0.5rem;
+    background-color: white;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    transition: all 0.2s ease;
+}
+
+.device-card:hover {
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    transform: translateY(-1px);
+}

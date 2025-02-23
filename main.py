@@ -113,7 +113,7 @@ def init():
             nav = Navigation()
             nav.setup_navigation()
             smart_home_page = SmartHomePage()
-            smart_home_page.create_content()
+            smart_home_page.build()
 
     @ui.page('/containers')
     def containers():
