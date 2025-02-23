@@ -135,22 +135,28 @@ def initialize_scenarios():
 
 def initialize_options():
     """Initialize default options if not already set"""
-    with db_session() as session:  # Use context manager properly
+    with SessionLocal() as session:
         try:
             logger.info("Initializing default options...")
-            if not Option.get_value('demo_mode'):
+            
+            # Only set demo_mode if it doesn't exist
+            if Option.get_value('demo_mode') is None:
                 Option.set_value('demo_mode', 'false')
                 logger.debug("Setting default option: demo_mode = false")
+                
             if not Option.get_value('mqtt_enabled'):
                 Option.set_value('mqtt_enabled', 'true')
                 logger.debug("Setting default option: mqtt_enabled = true")
+                
             if not Option.get_value('simulation_interval'):
                 Option.set_value('simulation_interval', '5')
                 logger.debug("Setting default option: simulation_interval = 5")
-            session.commit()  # Commit inside the context manager
+                
+            session.commit()
             logger.success("Default options initialized.")
+            
         except Exception as e:
-            session.rollback()  # Rollback inside the context manager
+            session.rollback()
             logger.error(f"Option initialization failed: {e}")
             raise
 

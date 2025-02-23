@@ -25,8 +25,9 @@ class Navigation():
     def setup_navigation(self):
         '''Sets up the navigation bar with all pages'''
         try:
-            # Use get_value and convert to boolean
-            is_demo_mode = bool(Option.get_value("demo_mode"))
+            # Only read the demo mode value, don't set it
+            is_demo_mode = Option.get_value("demo_mode") == "true"
+            
             with ui.header(elevated=True).style('background-color: #3874c8').classes('z-50'):
                 with ui.row().classes('mx-auto w-screen max-w-screen-2xl justify-between lg:px-8 lg:items-center'):
                     # Title and Home Link
@@ -55,15 +56,14 @@ class Navigation():
                             
         except Exception as e:
             logger.error(f"Error setting up navigation: {e}")
+            raise
 
     def on_demo_toggle(self, event: dict):
         """Toggle demo mode"""
         try:
-            with SessionLocal() as session:  # Use proper session
-                option = session.query(Option).filter_by(name='demo_mode').first()
-                new_value = not (option.value.lower() == 'true') if option else True
-                Option.set_value('demo_mode', str(new_value))
-                self.demo_mode = new_value
+            with SessionLocal() as session:
+                new_value = event.value
+                Option.set_value('demo_mode', str(new_value).lower())
                 ui.notify(f"Demo mode {'enabled' if new_value else 'disabled'}")
         except Exception as e:
             logger.error(f"Error toggling demo mode: {str(e)}")
