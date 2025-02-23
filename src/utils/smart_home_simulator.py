@@ -22,21 +22,21 @@ class SmartHomeSimulator:
     """Class to handle smart home sensor value simulation"""
     
     _instance = None
-    
-    def __new__(cls, *args, **kwargs):
-        if not cls._instance:
-            cls._instance = super().__new__(cls)
-        return cls._instance
+    _initialized = False
     
     @classmethod
-    def instance(cls):
+    def get_instance(cls, event_system: EventSystem = None):
+        """Get or create singleton instance"""
+        if not cls._instance:
+            cls._instance = cls(event_system)
         return cls._instance
     
-    def __init__(self, event_system: EventSystem, simulation_interval=5):
-        """Initializes the SmartHomeSimulator with proper env config"""
-        if hasattr(self, '_initialized'):  # Prevent reinitialization
+    def __init__(self, event_system: EventSystem):
+        """Initialize the simulator with event system"""
+        # Skip if already initialized
+        if SmartHomeSimulator._initialized:
             return
-        self._initialized = True
+            
         logger.info("Initializing SmartHomeSimulator")
         self.event_system = event_system
         self.active_scenario = None
@@ -46,7 +46,7 @@ class SmartHomeSimulator:
         self.sensor_simulators = {}
         self.broker_address = os.getenv('MQTT_BROKER_ADDRESS', 'localhost')
         self.broker_port = int(os.getenv('MQTT_BROKER_PORT', 1883))
-        self.simulation_interval = simulation_interval
+        self.simulation_interval = 5
         
         # Configure MQTT client with environment variables
         self.client = mqtt.Client(
@@ -89,6 +89,12 @@ class SmartHomeSimulator:
         # Initialize simulators after db is set
         self._initialize_simulators()
         
+        SmartHomeSimulator._initialized = True
+    
+    def is_running(self):
+        """Check if simulation is running"""
+        return self.running
+    
     def set_scenario(self, scenario_name: str):
         """Set the current scenario for simulation"""
         logger.info(f"Setting scenario to: {scenario_name}")

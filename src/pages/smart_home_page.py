@@ -38,24 +38,29 @@ class SmartHomePage:
     def __init__(self):
         """Initialize Smart Home Page"""
         logger.info("Initializing SmartHomePage")
-        self.event_system = EventSystem()
-        logger.debug("Created EventSystem instance")
         
-        self.simulator = SmartHomeSimulator(self.event_system)
-        logger.debug("Created SmartHomeSimulator with EventSystem")
+        # Get or create event system
+        self.event_system = EventSystem.get_instance()
+        logger.debug("Using existing or creating new EventSystem instance")
         
+        # Get or create simulator
+        self.simulator = SmartHomeSimulator.get_instance(self.event_system)
+        logger.debug("Using existing or creating new SmartHomeSimulator")
+        
+        # Create floor plan
         self.floor_plan = FloorPlan(self.event_system)
         logger.debug("Created FloorPlan with EventSystem")
         
+        # Initialize state
         self.active_container = None
         self.scenario_options = []
         self.scenario_select = None
         self.selected_scenario = None
+        self.scenarios = []
+        self.scenario_toggle = None  # Initialize the toggle button reference
         
+        # Setup handlers and initialize
         self._setup_event_handlers()
-        # Don't load initial data here
-        
-        # Initialize after all components are ready
         self._initialize_simulation()
 
     def _load_initial_data(self):
@@ -67,28 +72,29 @@ class SmartHomePage:
                     joinedload(Scenario.containers)
                 ).all()
                 
-                # Find any active scenario and set its container as active
-                active_scenario = next((s for s in self.scenarios if s.is_active), None)
-                if active_scenario and active_scenario.containers:
-                    self.active_container = active_scenario.containers[0]
-                    self.selected_scenario = active_scenario
-                    logger.info(f"Found active scenario: {active_scenario.name}")
-                    logger.info(f"Set active container to: {self.active_container.name}")
-                
-                # Update UI components
+                # Update scenario options
                 self.scenario_options = [s.name for s in self.scenarios]
+                
+                # Find active scenario if any
+                active_scenario = session.query(Scenario).filter_by(is_active=True).first()
+                if active_scenario:
+                    self.selected_scenario = active_scenario
+                    # Set the first container as active if scenario is active
+                    if active_scenario.containers:
+                        self.active_container = active_scenario.containers[0]
+                
+                # Update UI components if they exist
                 if self.scenario_select:
                     self.scenario_select.options = self.scenario_options
-                    if active_scenario:
-                        self.scenario_select.value = active_scenario.name
+                    if self.selected_scenario:
+                        self.scenario_select.value = self.selected_scenario.name
                     self.scenario_select.update()
+                
+                # Update button state if it exists
+                self._update_toggle_button_state()
                 
                 logger.debug(f"Loaded {len(self.scenarios)} scenarios")
                 
-            # Force an update if we have an active container
-            if self.active_container:
-                asyncio.create_task(self._update_smart_home())
-            
         except Exception as e:
             logger.error(f"Data loading failed: {str(e)}", exc_info=True)
             ui.notify("Failed to load scenarios", type='negative')
@@ -180,28 +186,31 @@ class SmartHomePage:
     def _change_scenario(self, scenario_name: str):
         """Handle scenario selection change"""
         try:
+            # First stop any currently active scenario
+            if self.selected_scenario and self.selected_scenario.is_active:
+                self._stop_scenario()
+            
             with SessionLocal() as session:
-                scenario = session.query(Scenario).filter_by(name=scenario_name).first()
-                if not scenario:
-                    logger.error(f"Scenario not found: {scenario_name}")
-                    ui.notify("Scenario not found", type='negative')
-                    return
+                # Load the selected scenario with its containers
+                scenario = session.query(Scenario).options(
+                    joinedload(Scenario.containers)
+                ).filter_by(name=scenario_name).first()
                 
-                # Stop current scenario if active
-                if self.active_container:
-                    self.active_container.stop()
+                if scenario:
+                    self.selected_scenario = scenario
+                    # Reset active container since we're selecting a new scenario
+                    self.active_container = None
+                    logger.info(f"Selected new scenario: {scenario_name}")
+                    
+                    # Update button state to show 'Start Scenario'
+                    self._update_toggle_button_state()
+                else:
+                    logger.warning(f"Scenario not found: {scenario_name}")
+                    ui.notify("Scenario not found", type='warning')
                 
-                # Start all containers in the new scenario
-                for container in scenario.containers:
-                    if container.start():
-                        self.active_container = container
-                        logger.info(f"Activated container {container.name} for scenario: {scenario_name}")
-                
-                ui.notify(f"Scenario activated: {scenario_name}", type='positive')
-                asyncio.create_task(self._update_smart_home())
         except Exception as e:
-            logger.error(f"Error changing scenario: {str(e)}")
-            ui.notify(f"Error changing scenario: {str(e)}", type='negative')
+            logger.error(f"Error in scenario selection: {str(e)}", exc_info=True)
+            ui.notify("Error selecting scenario", type='negative')
 
     def _update_room_data(self, room_type: str, devices: list):
         """Update room visualization with latest device data"""
@@ -230,38 +239,53 @@ class SmartHomePage:
 
     def create_content(self):
         """Create the page content"""
-        with ui.column().classes('w-full gap-4'):
-            # Scenario selection row
-            with ui.card().classes('w-full p-4 bg-white rounded-lg shadow-sm'):
-                with ui.row().classes('w-full items-center gap-4'):
-                    ui.label('Select Scenario:').classes('text-lg font-bold')
-                    self.scenario_select = ui.select(
-                        options=self.scenario_options,
-                        on_change=lambda e: self._update_scenario_selection(e.value)
-                    ).classes('min-w-[300px]')
-                    
-                    # Add toggle button instead of refresh
-                    self.scenario_toggle = ui.button('Start Scenario', 
-                                                   on_click=lambda: self._toggle_scenario()).classes('ml-4') \
-                                                  .props('icon=play_arrow color=positive')
-                    ui.button('Refresh', on_click=self._load_initial_data).classes('ml-2')
+        # Scenario selection row
+        with ui.card().classes('w-full p-4 bg-white rounded-lg shadow-sm'):
+            with ui.row().classes('w-full items-center gap-4'):
+                ui.label('Select Scenario:').classes('text-lg font-bold')
+                
+                # Load initial data before creating select
+                self._load_initial_data()
+                
+                # Create select with current scenarios
+                self.scenario_select = ui.select(
+                    options=self.scenario_options,
+                    on_change=lambda e: self._update_scenario_selection(e.value)
+                ).classes('min-w-[300px]')
+                
+                # Create toggle button with initial state
+                self.scenario_toggle = ui.button(
+                    'Select Scenario First',
+                    on_click=self._toggle_scenario
+                ).classes('ml-4')
+                
+                # Set initial values based on loaded data
+                if self.selected_scenario:
+                    self.scenario_select.value = self.selected_scenario.name
+                    self._update_toggle_button_state()
+
+        # Create floor plan
+        self.floor_plan.create_floor_plan()
+
+        # Floor plan visualization
+        with ui.card().classes('w-full p-4 bg-white rounded-lg shadow-sm'):
+            grid = ui.grid(columns=3).classes("gap-4 room-card-container")
+            # Update every second and ensure fresh database state
+            ui.timer(1.0, self._refresh_and_update)
+            logger.debug("Created floor plan with periodic updates")
             
-            # Floor plan visualization
-            with ui.card().classes('w-full p-4 bg-white rounded-lg shadow-sm'):
-                grid = ui.grid(columns=3).classes("gap-4 room-card-container")
-                self.floor_plan.create_floor_plan(container=grid)
-                # Update every second and ensure fresh database state
-                ui.timer(1.0, self._refresh_and_update)
-                logger.debug("Created floor plan with periodic updates")
-            
-            # Load initial data after creating UI components
-            self._load_initial_data()
             return self
 
     def _update_scenario_selection(self, scenario_name: str):
         """Handle scenario selection without auto-starting"""
         try:
             with SessionLocal() as session:
+                # First stop any currently active scenario
+                active_scenario = session.query(Scenario).filter_by(is_active=True).first()
+                if active_scenario and active_scenario.name != scenario_name:
+                    self._stop_scenario()
+                    logger.info(f"Stopped previously active scenario: {active_scenario.name}")
+                
                 # Load the selected scenario with its containers
                 scenario = session.query(Scenario).options(
                     joinedload(Scenario.containers)
@@ -269,22 +293,27 @@ class SmartHomePage:
                 
                 if scenario:
                     self.selected_scenario = scenario
-                    # If scenario is already active, set the active container
+                    # Set active container if scenario is active
                     if scenario.is_active and scenario.containers:
                         self.active_container = scenario.containers[0]
-                        logger.info(f"Set active container to: {self.active_container.name}")
+                    else:
+                        self.active_container = None
+                    logger.info(f"Selected new scenario: {scenario_name}")
                     
+                    # Update button state based on current scenario state
                     self._update_toggle_button_state()
                 else:
                     logger.warning(f"Scenario not found: {scenario_name}")
+                    ui.notify("Scenario not found", type='warning')
                 
         except Exception as e:
             logger.error(f"Error in scenario selection: {str(e)}", exc_info=True)
+            ui.notify("Error selecting scenario", type='negative')
 
     def _toggle_scenario(self):
         """Toggle scenario activation"""
         if not self.selected_scenario:
-            ui.notify("No scenario selected", type='warning')
+            ui.notify("Please select a scenario first", type='warning')
             return
         
         try:
@@ -300,19 +329,31 @@ class SmartHomePage:
 
     def _update_toggle_button_state(self):
         """Update button appearance based on scenario state"""
+        if not hasattr(self, 'scenario_toggle') or not self.scenario_toggle:
+            return  # Skip if button hasn't been created yet
+            
         if self.selected_scenario:
             active = self.selected_scenario.is_active
-            self.scenario_toggle.props(f'icon={"stop" if active else "play_arrow"}')
-            self.scenario_toggle.text = 'Stop Scenario' if active else 'Start Scenario'
-            self.scenario_toggle.classes(replace='bg-red' if active else 'bg-positive')
+            self.scenario_toggle.props(remove='disabled')  # Enable the button
+            if active:
+                self.scenario_toggle.props('icon=stop color=red')
+                self.scenario_toggle.text = 'Stop Scenario'
+            else:
+                self.scenario_toggle.props('icon=play_arrow color=green')
+                self.scenario_toggle.text = 'Start Scenario'
         else:
             self.scenario_toggle.text = 'Select Scenario First'
-            self.scenario_toggle.classes(replace='bg-grey')
+            self.scenario_toggle.props('disabled color=grey icon=play_arrow')
+            self.scenario_toggle.props('disabled')
 
     def _start_scenario(self):
         """Start the selected scenario"""
         try:
             with SessionLocal() as session:
+                # First deactivate any currently active scenarios
+                session.query(Scenario).update({'is_active': False})
+                session.commit()
+                
                 # Eager load containers and their devices
                 scenario = session.query(Scenario).options(
                     joinedload(Scenario.containers).joinedload(Container.devices)
@@ -321,9 +362,14 @@ class SmartHomePage:
                 if not scenario:
                     raise ValueError(f"Scenario {self.selected_scenario.id} not found")
                 
-                # Activate the scenario
+                # Activate only the selected scenario
+                scenario.is_active = True
                 scenario.activate()
                 session.commit()  # Commit the activation
+                
+                # Refresh scenario state after activation
+                session.refresh(scenario)
+                self.selected_scenario = scenario
                 
                 # Set the first container as active
                 if scenario.containers:
@@ -336,6 +382,8 @@ class SmartHomePage:
                     self.active_container = None
                 
             ui.notify(f"Scenario started: {self.selected_scenario.name}", type='positive')
+            # Update button state to show Stop
+            self._update_toggle_button_state()
             # Force an immediate update
             asyncio.create_task(self._update_smart_home())
             
@@ -347,13 +395,28 @@ class SmartHomePage:
         """Stop the selected scenario"""
         try:
             with SessionLocal() as session:
+                # Get scenario with fresh state
                 scenario = session.query(Scenario).get(self.selected_scenario.id)
+                if not scenario:
+                    raise ValueError(f"Scenario {self.selected_scenario.id} not found")
+
+                # Deactivate the scenario
+                scenario.is_active = False
                 scenario.deactivate()
+                
                 # Clear the active container
                 self.active_container = None
+                
+                # Commit changes
                 session.commit()
                 
+                # Refresh scenario state after deactivation
+                session.refresh(scenario)
+                self.selected_scenario = scenario
+                
             ui.notify(f"Scenario stopped: {self.selected_scenario.name}", type='warning')
+            # Update button state to show Start
+            self._update_toggle_button_state()
             
         except Exception as e:
             logger.error(f"Error stopping scenario: {str(e)}", exc_info=True)
@@ -377,8 +440,16 @@ class SmartHomePage:
 
     def _initialize_simulation(self):
         """Start simulation after all handlers are registered"""
-        self.simulator.start_simulation()
-        logger.info("SmartHomeSimulation started with registered listeners")
+        try:
+            # Only start if not already running
+            if not self.simulator.is_running():
+                self.simulator.start_simulation()
+                logger.info("SmartHomeSimulation started with registered listeners")
+            else:
+                logger.debug("Simulation already running, skipping start")
+        except Exception as e:
+            logger.error(f"Failed to initialize simulation: {str(e)}", exc_info=True)
+            ui.notify("Failed to start simulation", type='negative')
 
 async def update_floorplan(sensor_data):
     """Asynchronously update the floor plan view with the new sensor reading using the location provided in the sensor data."""

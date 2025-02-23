@@ -61,22 +61,29 @@ class SmartHomeEvent:
         return False
 
 class EventSystem:
-    """Event system for handling sensor updates and other events"""
+    """Event system for handling smart home events"""
     
     _instance = None
+    _initialized = False
     
-    def __new__(cls):
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
+    @classmethod
+    def get_instance(cls):
+        """Get or create singleton instance"""
+        if not cls._instance:
+            cls._instance = cls()
         return cls._instance
     
     def __init__(self):
-        if not hasattr(self, 'initialized'):
-            self.initialized = True
-            self.handlers = {}
-            self.logger = logger
-            self._events = []
-            self._lock = Lock()
+        """Initialize event system"""
+        # Skip if already initialized
+        if EventSystem._initialized:
+            return
+            
+        self.handlers = defaultdict(list)
+        EventSystem._initialized = True
+        self.logger = logger
+        self._events = []
+        self._lock = Lock()
             
     async def emit(self, event_type: str, data: dict):
         """Emit an event to all registered handlers"""

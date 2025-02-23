@@ -32,9 +32,11 @@ class ContainersPage:
 
     def setup_layout(self):
         '''Sets up Navigation and updates page title'''
+        # Remove any nested header elements
         ui.query('main').classes('h-px')
         ui.query('.nicegui-content').classes('mx-auto max-w-screen-2xl p-8')
-        ui.label("Container").classes('text-2xl font-bold')
+        with ui.row().classes('w-full items-center justify-between mb-4'):
+            ui.label("Container").classes('text-2xl font-bold')
 
     def setup_menu_bar(self):
         '''Sets up the menu bar'''

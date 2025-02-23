@@ -7,7 +7,6 @@ from src.models.sensor import Sensor
 from src.models.container import Container
 from src.models.base_model import BaseModel  # single source for the base model
 from src.models.option import Option
-from src.models.schedule import Schedule
 from src.models.scenario import Scenario
 from src.models.room import Room
 
@@ -16,7 +15,7 @@ def register_models():
     # Add all model imports here
     from src.models import (
         Option, Container, Device, Sensor, 
-        Scenario, Room, Schedule  # Add missing models
+        Scenario, Room  # Add missing models
     )
     
     logger.info(f"Database URL in register_models: {engine.url}") # Log DB URL
