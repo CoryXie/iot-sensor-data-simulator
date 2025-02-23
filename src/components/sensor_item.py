@@ -6,6 +6,9 @@ from src.models.device import Device
 from src.models.container import Container
 from src.database import db_session
 from sqlalchemy.orm import joinedload
+from src.components.sensor_time_series import SensorTimeSeries
+from datetime import datetime, timedelta
+import asyncio
 
 
 class SensorItem:
@@ -14,6 +17,8 @@ class SensorItem:
     def __init__(self, sensor_id: int, delete_callback: Callable = None, sensor: Sensor = None):
         """Initialize the sensor item"""
         self.sensor_id = sensor_id
+        self.time_series = SensorTimeSeries(max_points=100)
+        self.update_task = None
         self.setup(sensor_id, delete_callback, sensor)
     
     def setup(self, sensor_id: int, delete_callback: Callable = None, sensor: Sensor = None):
@@ -30,25 +35,22 @@ class SensorItem:
                     return
                 
                 refreshed_sensor = session.merge(sensor)
-                device_name = refreshed_sensor.device.name
-                container = refreshed_sensor.device.container
+                device_name = refreshed_sensor.device.name if refreshed_sensor.device else "No Device"
+                container = refreshed_sensor.device.container if refreshed_sensor.device else None
                 
-                with ui.card().classes('sensor-card'):
-                    ui.label(f"{device_name} - {refreshed_sensor.name}")
-                    ui.label(f"Value: {refreshed_sensor.current_value}{refreshed_sensor.unit}")
+                # Store sensor info for updates
+                self.sensor_type = refreshed_sensor.type
+                self.sensor_unit = refreshed_sensor.unit
                 
-                self.device_name = device_name
-                
-                with ui.card().classes('w-full'):
-                    with ui.row().classes('w-full items-center'):
+                with ui.card().classes('w-full p-4'):
+                    with ui.row().classes('w-full items-center justify-between'):
                         with ui.column().classes('flex-grow'):
                             ui.label(f'Name: {refreshed_sensor.name}').classes('text-lg font-bold')
                             ui.label(f'Type: {refreshed_sensor.type}')
                             ui.label(f'Base Value: {refreshed_sensor.base_value} {refreshed_sensor.unit}')
-                            ui.label(f'Sensor Type: {refreshed_sensor.type}')
                             
                             if refreshed_sensor.device:
-                                ui.label(f'Device: {refreshed_sensor.device.name}')
+                                ui.label(f'Device: {device_name}')
                                 ui.label(f'Location: {refreshed_sensor.device.location}')
                             
                             if refreshed_sensor.type == 'continuous':
@@ -59,15 +61,64 @@ class SensorItem:
                             if error_def:
                                 ui.label(f'Error Definition: {error_def}').classes('text-red-500')
                         
-                        with ui.column().classes('justify-end'):
+                        with ui.column().classes('justify-end gap-2'):
                             ui.button('Details', on_click=lambda: self.show_details_dialog()).classes('bg-blue-500')
                             if delete_callback:
-                                ui.button('Delete', on_click=lambda: delete_callback(refreshed_sensor.id)).classes('bg-red-500')
+                                ui.button('Delete', on_click=lambda: self.cleanup_and_delete(delete_callback)).classes('bg-red-500')
+                    
+                    # Add time series plot
+                    self.plot_container = ui.element('div').classes('w-full mt-4')
+                    with self.plot_container:
+                        self.time_series_plot = self.time_series.create_plot(
+                            sensor_type=refreshed_sensor.type,
+                            unit=refreshed_sensor.unit
+                        )
+                    
+                    # Start update task
+                    self.start_updates()
+                
         except Exception as e:
             logger.error(f"Error setting up sensor item: {str(e)}")
             with ui.card().classes('w-full'):
                 ui.label(f'Error displaying sensor: {sensor_id}').classes('text-red-500')
-
+    
+    async def update_time_series(self):
+        """Update time series data periodically"""
+        try:
+            while True:
+                with db_session() as session:
+                    sensor = session.query(Sensor).get(self.sensor_id)
+                    if sensor:
+                        # Add new data point
+                        self.time_series.add_point(sensor.current_value)
+                        
+                        # Update plot
+                        with self.plot_container:
+                            self.time_series_plot.clear()
+                            self.time_series_plot = self.time_series.create_plot(
+                                sensor_type=self.sensor_type,
+                                unit=self.sensor_unit
+                            )
+                        
+                        # Check if sensor status changed
+                        if not sensor.is_active:
+                            self.time_series.add_status_marker('Stopped')
+                        
+                await asyncio.sleep(5)  # Update every 5 seconds
+        except Exception as e:
+            logger.error(f"Error updating time series: {str(e)}")
+    
+    def start_updates(self):
+        """Start the update task"""
+        if not self.update_task:
+            self.update_task = asyncio.create_task(self.update_time_series())
+    
+    def cleanup_and_delete(self, delete_callback):
+        """Clean up update task and delete sensor"""
+        if self.update_task:
+            self.update_task.cancel()
+        delete_callback(self.sensor_id)
+    
     def show_details_dialog(self):
         """Show detailed sensor information in a dialog"""
         try:
