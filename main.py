@@ -99,32 +99,48 @@ def init():
     def home():
         """Create the main application page with navigation tabs"""
         with ui.column().classes('w-full min-h-screen bg-gray-50'):
-            # Create page instances
-            smart_home_page = SmartHomePage()
-            containers_page = ContainersPage(iot_hub_helper=iot_hub_helper)
-            devices_page = DevicesPage(iot_hub_helper=iot_hub_helper)
-            sensors_page = SensorsPage(iot_hub_helper=iot_hub_helper)
+            # Create navigation at the top
+            nav = Navigation()
+            nav.setup_navigation()
+            
+            # Create the introduction content
+            create_intro_content()
 
-            # Navigation tabs at the top
-            with ui.tabs().classes('w-full') as tabs:
-                ui.tab('Introduction').props('default')
-                ui.tab('Smart Home')
-                ui.tab('Containers')
-                ui.tab('Devices')
-                ui.tab('Sensors')
-        
-            # Tab panels below
-            with ui.tab_panels(tabs).classes('w-full'):
-                with ui.tab_panel('Introduction'):
-                    create_intro_content()
-                with ui.tab_panel('Smart Home'):
-                    smart_home_page.create_content()
-                with ui.tab_panel('Containers'):
-                    containers_page.create_content()
-                with ui.tab_panel('Devices'):
-                    devices_page.create_content()
-                with ui.tab_panel('Sensors'):
-                    sensors_page.create_content()
+    @ui.page('/smart_home')
+    def smart_home():
+        """Smart Home visualization page"""
+        with ui.column().classes('w-full min-h-screen bg-gray-50'):
+            nav = Navigation()
+            nav.setup_navigation()
+            smart_home_page = SmartHomePage()
+            smart_home_page.create_content()
+
+    @ui.page('/containers')
+    def containers():
+        """Containers management page"""
+        with ui.column().classes('w-full min-h-screen bg-gray-50'):
+            nav = Navigation()
+            nav.setup_navigation()
+            containers_page = ContainersPage(iot_hub_helper=iot_hub_helper)
+            containers_page.create_content()
+
+    @ui.page('/devices')
+    def devices():
+        """Devices management page"""
+        with ui.column().classes('w-full min-h-screen bg-gray-50'):
+            nav = Navigation()
+            nav.setup_navigation()
+            devices_page = DevicesPage(iot_hub_helper=iot_hub_helper)
+            devices_page.create_content()
+
+    @ui.page('/sensors')
+    def sensors():
+        """Sensors management page"""
+        with ui.column().classes('w-full min-h-screen bg-gray-50'):
+            nav = Navigation()
+            nav.setup_navigation()
+            sensors_page = SensorsPage(iot_hub_helper=iot_hub_helper)
+            sensors_page.create_content()
 
     @ui.page('/debug_sensors')
     def debug_sensors():
