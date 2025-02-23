@@ -381,7 +381,21 @@ class SmartHomeSimulator:
                     }
 
                 # Operations outside session context
-                self.publish_sensor_data(f"sensors/{device.id}/{current_sensor.id}", publish_data)
+                device_name = device.name.lower().replace(' ', '_')
+                location = device.location.lower().replace(' ', '_')
+                sensor_type = sensor.name.lower().replace(' ', '_')
+                topic = f"smart_home/{location}/{device_name}/{sensor_type}"
+                
+                message_data = {
+                    "id": sensor.id,
+                    "type": sensor.name,
+                    "value": sensor.current_value,
+                    "unit": sensor.unit,
+                    "device": device.name,
+                    "location": device.location,
+                    "timestamp": datetime.now().isoformat()
+                }
+                self.publish_sensor_data(topic, message_data)
                 time.sleep(sensor_interval)
 
         except Exception as e:
@@ -589,8 +603,33 @@ class SmartHomeSimulator:
                         
                         # Publish to MQTT if connected
                         if self.client and self.client.is_connected():
-                            topic = f"sensors/{device.id}/{sensor.id}"
-                            self.publish_sensor_data(topic, sensor_data)
+                            # Get device attributes with fallbacks
+                            device_name = device.name or f"device_{device.id}"
+                            device_location = device.location or device.room.name if device.room else "unknown"
+                            sensor_name = sensor.name or f"sensor_{sensor.id}"
+                            
+                            # Format the topic components
+                            device_name = device_name.lower().replace(' ', '_')
+                            location = device_location.lower().replace(' ', '_')
+                            sensor_type = sensor_name.lower().replace(' ', '_')
+                            
+                            # Format the topic
+                            topic = f"smart_home/{location}/{device_name}/{sensor_type}"
+                            
+                            # Format the message data
+                            message_data = {
+                                "id": sensor.id,
+                                "type": sensor_name,
+                                "value": sensor.current_value,
+                                "unit": sensor.unit or "",
+                                "device": device_name,
+                                "location": device_location,
+                                "timestamp": datetime.now().isoformat()
+                            }
+                            
+                            # Log the topic for debugging
+                            logger.debug(f"Publishing to MQTT topic: {topic}")
+                            self.publish_sensor_data(topic, message_data)
                         
                         logger.debug(f"Updated {device.name} {sensor.name} to {sensor.current_value} {sensor.unit}")
                 

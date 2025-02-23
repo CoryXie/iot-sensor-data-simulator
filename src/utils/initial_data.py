@@ -184,14 +184,14 @@ def initialize_devices_and_sensors():
                     if device_key in created_devices:
                         continue
                         
-                    # Create device with explicit room assignment
+                    # Create device with explicit room assignment and location
                     device = Device(
                         name=f"{room_name} {device_name}",
                         type=device_template['type'],
-                        room=room  # Direct relationship assignment
+                        room=room,  # Direct relationship assignment
+                        location=room_name  # Set location explicitly
                     )
                     session.add(device)
-                    session.commit()  # Generate ID before accessing
                     session.flush()  # Ensure device ID is generated
                     
                     # Store reference to created device
