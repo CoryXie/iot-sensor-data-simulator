@@ -88,30 +88,67 @@ class EventSystem:
     async def emit(self, event_type: str, data: dict):
         """Emit an event to all registered handlers"""
         if event_type in self.handlers:
+            # Make a copy of the data to avoid modifying the original
+            safe_data = data.copy() if isinstance(data, dict) else {"value": data}
+            
+            # Ensure client_id is always a string if present
+            if 'client_id' in safe_data:
+                if isinstance(safe_data['client_id'], dict):
+                    # Convert dict to string representation
+                    try:
+                        safe_data['client_id'] = str(hash(frozenset(safe_data['client_id'].items())))
+                        self.logger.debug(f"Converted dict client_id to string hash: {safe_data['client_id']}")
+                    except Exception as e:
+                        # If hashing fails, use a simpler approach
+                        safe_data['client_id'] = str(safe_data['client_id'])
+                        self.logger.debug(f"Converted dict client_id to simple string: {safe_data['client_id']}")
+                elif safe_data['client_id'] is not None:
+                    # Convert any other type to string
+                    safe_data['client_id'] = str(safe_data['client_id'])
+                
             for handler in self.handlers[event_type]:
                 try:
                     if asyncio.iscoroutinefunction(handler):
                         # If handler is async, await it directly
-                        await handler(data)
+                        await handler(safe_data)
                     else:
                         # If handler is sync, run it in the default executor
                         loop = asyncio.get_running_loop()
-                        await loop.run_in_executor(None, handler, data)
+                        await loop.run_in_executor(None, handler, safe_data)
                 except Exception as e:
                     self.logger.error(f"Error in event handler for {event_type}: {str(e)}")
-                    self.logger.debug(f"Handler: {handler.__name__}, Data: {data}")
+                    self.logger.exception("Full traceback:")
+                    handler_name = getattr(handler, '__name__', str(handler))
+                    self.logger.debug(f"Handler: {handler_name}, Data: {safe_data}")
     
     def on(self, event_type: str, handler):
         """Register an event handler"""
+        if not handler:
+            self.logger.warning(f"Attempted to register None handler for {event_type}")
+            return
+
         if event_type not in self.handlers:
             self.handlers[event_type] = []
+        
+        # Check if handler is already registered
         if handler not in self.handlers[event_type]:
             self.handlers[event_type].append(handler)
+            handler_name = getattr(handler, '__name__', str(handler))
+            self.logger.debug(f"Registered handler {handler_name} for event {event_type}")
+        else:
+            handler_name = getattr(handler, '__name__', str(handler))
+            self.logger.debug(f"Handler {handler_name} already registered for event {event_type}")
             
     def off(self, event_type: str, handler):
         """Remove an event handler"""
         if event_type in self.handlers and handler in self.handlers[event_type]:
             self.handlers[event_type].remove(handler)
+            
+    def remove_all_handlers(self, event_type: str):
+        """Remove all handlers for a specific event type"""
+        if event_type in self.handlers:
+            self.handlers[event_type] = []
+            self.logger.debug(f"Removed all handlers for event type: {event_type}")
             
     def add_event(self, event: SmartHomeEvent):
         """Add an event to the system"""

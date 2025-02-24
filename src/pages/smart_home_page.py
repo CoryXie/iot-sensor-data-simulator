@@ -27,6 +27,9 @@ from datetime import datetime, time
 from typing import Optional
 import requests
 from typing import List, Dict
+from dataclasses import dataclass
+import math
+import random
 
 # Configure logger
 logger.add("logs/smart_home.log", rotation="500 MB", level="INFO")
@@ -39,16 +42,67 @@ sensor_room_mapping = {
     # Add more mappings here
 }
 
+@dataclass
+class WeatherImpactFactors:
+    """Enhanced impact factors with more realistic modifiers"""
+    temperature_modifier: float      # Celsius modifier
+    humidity_modifier: float        # Percentage points modifier
+    light_level_modifier: float    # Percentage points modifier
+    air_quality_modifier: float    # AQI points modifier
+    noise_level_modifier: float    # Decibel modifier
+    wind_chill_modifier: float     # Wind chill effect
+    heat_index_modifier: float     # Heat index effect
+    pressure_modifier: float       # Pressure modifier
+    
+    @classmethod
+    def get_impact_factors(cls, condition: WeatherCondition, temp: float, humidity: float) -> 'WeatherImpactFactors':
+        """Get impact factors considering temperature and humidity"""
+        base_factors = {
+            WeatherCondition.SUNNY: cls(3.0, -10.0, 30.0, -8.0, 0.0, 0.0, 1.2, -2.0),
+            WeatherCondition.PARTLY_CLOUDY: cls(1.0, -5.0, 15.0, -4.0, 0.0, 0.5, 1.0, -1.0),
+            WeatherCondition.CLOUDY: cls(-0.5, 5.0, -20.0, 2.0, 0.0, 0.8, 0.9, 0.0),
+            WeatherCondition.OVERCAST: cls(-1.5, 10.0, -30.0, 5.0, 0.0, 1.0, 0.8, 1.0),
+            WeatherCondition.LIGHT_RAIN: cls(-2.0, 20.0, -40.0, -5.0, 5.0, 1.2, 0.7, 2.0),
+            WeatherCondition.RAINY: cls(-3.0, 30.0, -50.0, -10.0, 10.0, 1.5, 0.6, 3.0),
+            WeatherCondition.HEAVY_RAIN: cls(-4.0, 40.0, -60.0, -15.0, 15.0, 1.8, 0.5, 4.0),
+            WeatherCondition.STORMY: cls(-5.0, 50.0, -70.0, -20.0, 25.0, 2.0, 0.4, 5.0),
+            WeatherCondition.LIGHT_SNOW: cls(-6.0, -5.0, -30.0, 5.0, -5.0, 2.2, 0.3, 3.0),
+            WeatherCondition.SNOWY: cls(-8.0, -10.0, -40.0, 8.0, -8.0, 2.5, 0.2, 4.0),
+            WeatherCondition.HEAVY_SNOW: cls(-10.0, -15.0, -50.0, 10.0, -10.0, 3.0, 0.1, 5.0),
+            WeatherCondition.FOGGY: cls(-1.0, 25.0, -45.0, 15.0, -5.0, 1.3, 0.7, 1.0),
+            WeatherCondition.WINDY: cls(-2.0, -15.0, -10.0, -12.0, 20.0, 2.0, 0.8, -2.0)
+        }
+        
+        factors = base_factors.get(condition)
+        
+        # Adjust for extreme temperatures
+        if temp > 30:  # Hot weather
+            factors.temperature_modifier *= 1.2
+            factors.humidity_modifier *= 1.3
+        elif temp < 0:  # Cold weather
+            factors.temperature_modifier *= 0.8
+            factors.humidity_modifier *= 0.7
+            
+        # Adjust for humidity
+        if humidity > 80:  # High humidity
+            factors.heat_index_modifier *= 1.3
+        elif humidity < 30:  # Low humidity
+            factors.heat_index_modifier *= 0.7
+            
+        return factors
+
 class SmartHomePage:
     """Smart home monitoring and control page"""
     
-    def __init__(self):
+    def __init__(self, event_system):
         """Initialize Smart Home Page"""
         logger.info("Initializing SmartHomePage")
         
-        # Get or create event system
-        self.event_system = EventSystem.get_instance()
-        logger.debug("Using existing or creating new EventSystem instance")
+        self.event_system = event_system
+        
+        self.devices = {}
+        self.sensors = {}
+        self.setup_event_handlers()
         
         # Get or create simulator
         self.simulator = SmartHomeSimulator.get_instance(self.event_system)
@@ -65,6 +119,13 @@ class SmartHomePage:
         self.selected_scenario = None
         self.scenarios = []
         self.scenario_toggle = None
+        
+        # Initialize simulation time
+        current_datetime = datetime.now()
+        self.simulation_time = SimulationTime(
+            start_time=current_datetime,
+            custom_time=None
+        )
         
         # Location and weather controls
         self.weather_service = WeatherService()
@@ -86,8 +147,9 @@ class SmartHomePage:
         
         # Default location
         self.current_location = Location(
-            country="United States",
             region="San Francisco",
+            latitude=37.7749,
+            longitude=-122.4194,
             timezone="America/Los_Angeles"
         )
         
@@ -104,10 +166,107 @@ class SmartHomePage:
             {"name": "Berlin", "region": "Berlin", "country": "Germany", "tz_id": "Europe/Berlin"},
             {"name": "Mumbai", "region": "Maharashtra", "country": "India", "tz_id": "Asia/Kolkata"}
         ]
-        
-        # Setup handlers and initialize
-        self._setup_event_handlers()
+
         self._initialize_simulation()
+
+        # Initialize UI components that haven't been created yet
+        # (Don't overwrite floor_plan which was already created)
+        self.weather_select = None
+        self.weather_card = None
+        self.location_select = None
+        self.time_slider = None
+        self.current_data = {}
+        self.device_controls = None
+        self.locations = {}
+        
+        # Register event handlers
+        self.setup_event_handlers()
+        
+        # Initialize weather service if not already done
+        if not hasattr(self, 'weather_service') or self.weather_service is None:
+            self.weather_service = WeatherService()
+
+    def setup_event_handlers(self):
+        """Set up event handlers for real-time updates"""
+        self.event_system.on('sensor_update', self.handle_sensor_update)
+        self.event_system.on('device_update', self.handle_device_update)
+        
+    async def handle_sensor_update(self, data):
+        """Handle real-time sensor updates"""
+        sensor_id = data['sensor_id']
+        self.sensors[sensor_id] = {
+            'value': data['value'],
+            'unit': data['unit'],
+            'timestamp': data['timestamp'],
+            'device_id': data['device_id'],
+            'device_name': data['device_name'],
+            'location': data['location'],
+            'device_type': data['device_type']
+        }
+        await self.update_ui()
+        
+    async def handle_device_update(self, data):
+        """Handle real-time device updates"""
+        device_id = data['device_id']
+        self.devices[device_id] = {
+            'name': data['name'],
+            'type': data['type'],
+            'location': data['location'],
+            'update_counter': data['update_counter']
+        }
+        await self.update_ui()
+        
+    async def update_ui(self):
+        """Update the UI with latest sensor and device data"""
+        try:
+            # Group sensors by location and device type
+            locations = {}
+            for sensor_id, sensor_data in self.sensors.items():
+                location = sensor_data['location']
+                device_type = sensor_data['device_type']
+                
+                if location not in locations:
+                    locations[location] = {}
+                if device_type not in locations[location]:
+                    locations[location][device_type] = []
+                    
+                locations[location][device_type].append({
+                    'sensor_id': sensor_id,
+                    'value': sensor_data['value'],
+                    'unit': sensor_data['unit'],
+                    'device_name': sensor_data['device_name'],
+                    'timestamp': sensor_data['timestamp']
+                })
+            
+            # Update the UI components
+            for location, device_types in locations.items():
+                for device_type, sensors in device_types.items():
+                    await self.update_location_section(location, device_type, sensors)
+                    
+        except Exception as e:
+            logger.error(f"Error updating UI: {str(e)}")
+            
+    async def update_location_section(self, location, device_type, sensors):
+        """Update a specific location section in the UI"""
+        try:
+            # Format sensor data for display
+            sensor_displays = []
+            for sensor in sensors:
+                value_str = f"{sensor['value']:.1f}" if isinstance(sensor['value'], float) else str(sensor['value'])
+                sensor_displays.append(f"{sensor['device_name']}: {value_str}{sensor['unit']}")
+                
+            # Update the UI elements
+            section_id = f"{location}-{device_type}"
+            await self.event_system.emit('ui_update', {
+                'section_id': section_id,
+                'location': location.replace('_', ' ').title(),
+                'device_type': device_type.replace('_', ' ').title(),
+                'sensors': sensor_displays,
+                'timestamp': datetime.now().isoformat()
+            })
+            
+        except Exception as e:
+            logger.error(f"Error updating location section: {str(e)}")
 
     def _load_initial_data(self):
         """Load initial data from database and templates"""
@@ -139,43 +298,6 @@ class SmartHomePage:
         except Exception as e:
             logger.error(f"Data loading failed: {str(e)}", exc_info=True)
             ui.notify("Failed to load scenarios", type='negative')
-
-    def _setup_event_handlers(self):
-        """Set up event handlers for real-time updates"""
-        try:
-            # Define handlers first
-            async def handle_device_update(data):
-                """Handle device update events"""
-                try:
-                    device_id = data.get('device_id')
-                    if device_id:
-                        with SessionLocal() as session:
-                            device = session.query(Device).filter_by(id=device_id).first()
-                            if device:
-                                logger.debug(f"Device {device.name} updated, counter: {device.update_counter}")
-                except Exception as e:
-                    logger.error(f"Error handling device update: {e}")
-
-            async def handle_sensor_update(data):
-                """Handle sensor update events"""
-                try:
-                    device_id = data.get('device_id')
-                    sensor_id = data.get('sensor_id')
-                    if device_id and sensor_id:
-                        with SessionLocal() as session:
-                            device = session.query(Device).filter_by(id=device_id).first()
-                            if device:
-                                logger.debug(f"Sensor update for device {device.name}, counter: {device.update_counter}")
-                except Exception as e:
-                    logger.error(f"Error handling sensor update: {e}")
-
-            # Register handlers
-            self.event_system.on('device_update', handle_device_update)
-            self.event_system.on('sensor_update', handle_sensor_update)
-            logger.info("Event handlers registered successfully")
-
-        except Exception as e:
-            logger.error(f"Error setting up event handlers: {e}")
 
     async def _update_smart_home(self):
         """Update smart home visualization based on current state"""
@@ -271,10 +393,9 @@ class SmartHomePage:
             
             logger.debug(f"Updating room {room_type} with {len(formatted_devices)} devices")
 
-            self.floor_plan.update_room_data(
-                room_type.lower().replace(' ', '_'),
-                formatted_devices
-            )
+            # Normalize room type to match floor plan's format
+            normalized_room_type = room_type.lower().replace(' ', '_')
+            self.floor_plan.update_room_data(normalized_room_type, formatted_devices)
         except Exception as e:
             logger.error(f"Error updating room data: {str(e)}")
 
@@ -405,34 +526,19 @@ class SmartHomePage:
                     # Weather result card
                     self.weather_result_card = ui.card().classes('w-full p-4 mt-4')
                 
-                # Time and Weather Controls
-                with ui.row().classes('items-center gap-4 mt-4'):
-                    self.time_input = ui.input(
-                        label='Simulation Time',
-                        value=datetime.now().strftime('%H:%M')
-                    ).props('outlined dense type=time').classes('w-full')
-                    self.time_input.on('update:model-value', self._update_simulation_time)
-                    
-                    # Create weather options as a list of strings
-                    weather_options = [w.value.replace('_', ' ').title() 
-                                     for w in WeatherCondition]
-                    self.weather_select = ui.select(
-                        options=weather_options,
-                        value=self.current_weather.value.replace('_', ' ').title(),
-                        label='Weather Condition'
-                    ).props('outlined dense').classes('w-full')
-                    self.weather_select.on('update:model-value', 
-                        lambda v: self._update_weather_condition(v.lower().replace(' ', '_')))
-                    
-                    ui.switch('Include Air Quality', value=True).bind_value(
-                        self, 'include_aqi'
-                    ).classes('mt-4')
+                # Remove the Time and Weather Controls section
+                # Keep related variables for compatibility with other code
+                self.time_input = None  
+                self.weather_select = None
+                # Set defaults for the variables that would have been set by these controls
+                self.current_weather = WeatherCondition.SUNNY
+                self.include_aqi = True
 
     def _build_floor_plan(self):
         """Build floor plan visualization section"""
         with ui.card().classes('w-full p-4'):
             ui.label('Smart Home Floor Plan').classes('text-h6 mb-4')
-            # Only create the floor plan, initialization is done in constructor
+            # Create the floor plan with normalized room types
             self.floor_plan.create_floor_plan()
 
     def _show_location_input(self, input_type: str):
@@ -642,26 +748,36 @@ class SmartHomePage:
     def _initialize_simulation(self):
         """Start simulation after all handlers are registered"""
         try:
+            logger.info("🚀 Starting simulation initialization...")
+            
             # Load initial data but don't start any simulation
+            logger.info("Loading initial data...")
             self._load_initial_data()
             
             # Initialize scenarios without activating any
             with SessionLocal() as session:
+                logger.info("Checking for active scenarios...")
                 # Deactivate any active scenarios
-                session.query(Scenario).update({'is_active': False})
-                session.commit()
+                active_count = session.query(Scenario).filter_by(is_active=True).count()
+                if active_count > 0:
+                    logger.info(f"Deactivating {active_count} active scenarios")
+                    session.query(Scenario).update({'is_active': False})
+                    session.commit()
                 
                 # Load scenarios for selection without activating
                 scenarios = session.query(Scenario).all()
                 self.scenarios = scenarios
                 self.scenario_options = [s.name for s in scenarios]
+                logger.info(f"Loaded {len(scenarios)} available scenarios: {', '.join(self.scenario_options)}")
+                
                 self.selected_scenario = None  # Ensure no scenario is selected
                 self.active_container = None   # Ensure no container is active
                 
-            logger.info("Simulation initialized without auto-start")
+            logger.info("✅ Simulation initialized successfully")
             
         except Exception as e:
-            logger.error(f"Error in simulation initialization: {e}")
+            logger.error(f"❌ Error in simulation initialization: {e}")
+            logger.exception("Detailed error trace:")
             ui.notify("Error initializing simulation", type='negative')
 
     async def _fetch_weather_data(self):
@@ -683,12 +799,16 @@ class SmartHomePage:
             logger.exception("Full traceback:")
             ui.notify(f'Error fetching weather data: {str(e)}', type='negative')
 
-    def _update_weather_display(self, weather_data: dict):
+    async def _update_weather_display(self, weather_data: dict):
         """Update weather display with API data"""
         try:
+            # Check if weather_result_card exists and is not None
+            if not hasattr(self, 'weather_result_card') or self.weather_result_card is None:
+                logger.warning("Cannot update weather display: weather_result_card is None")
+                return
+                
             # Clear previous content
-            if self.weather_result_card:
-                self.weather_result_card.clear()
+            self.weather_result_card.clear()
             
             # Update weather display
             with self.weather_result_card:
@@ -732,14 +852,16 @@ class SmartHomePage:
                                 ui.label(f"{weather_data['air_quality'].get('o3', 'N/A')} μg/m³")
                 
                 # Update simulator with real weather data
-                self._update_simulation_with_weather(weather_data)
+                try:
+                    await self._update_simulation_with_weather(weather_data)
+                except Exception as e:
+                    logger.error(f"Error updating simulation with weather data: {e}")
         
         except Exception as e:
             logger.error(f"Error updating weather display: {e}")
             logger.exception("Full traceback:")
-            ui.notify('Error updating weather display', type='negative')
 
-    def _update_simulation_with_weather(self, weather_data: dict):
+    async def _update_simulation_with_weather(self, weather_data: dict):
         """Update simulation with real weather data"""
         try:
             # Map weather condition to our enum
@@ -768,19 +890,29 @@ class SmartHomePage:
                     break
             
             # Update weather select and trigger simulation update
-            self.weather_select.value = matched_condition.value
-            self._update_weather_condition(matched_condition.value)
+            # Check if weather_select exists and is not None before using it
+            if hasattr(self, 'weather_select') and self.weather_select is not None:
+                try:
+                    self.weather_select.value = matched_condition.value.replace('_', ' ').title()
+                    await self.weather_select.update()
+                except Exception as e:
+                    logger.error(f"Error updating weather select UI: {e}")
+            
+            # Update the weather condition regardless of UI component status
+            await self._update_weather_condition(matched_condition.value)
             
         except Exception as e:
             logger.error(f"Error updating simulation with weather data: {e}")
+            logger.exception("Full traceback:")
 
     def _reset_weather_settings(self):
         """Reset weather settings to default values"""
         self.location_type_select.value = LocationType.CITY.value
         self.location_search.value = ''
         self.current_location = Location(
-            country="United States",
             region="San Francisco",
+            latitude=37.7749,
+            longitude=-122.4194,
             timezone="America/Los_Angeles"
         )
         self.timezone_select.value = self.current_location.timezone
@@ -790,28 +922,102 @@ class SmartHomePage:
         self._update_simulation_state()
         ui.notify('Weather settings reset to default values')
 
-    def _update_weather_condition(self, condition: str):
+    async def _update_weather_condition(self, condition: str):
         """Update weather condition and simulation state"""
-        self.current_weather = WeatherCondition(condition)
-        self._update_simulation_state()
+        try:
+            if condition:
+                self.current_weather = WeatherCondition(condition)
+            else:
+                logger.warning("Empty weather condition provided, using default SUNNY")
+                self.current_weather = WeatherCondition.SUNNY
+                
+            await self._update_simulation_state()
+        except Exception as e:
+            logger.error(f"Error updating weather condition: {e}")
+            # Use default value in case of error
+            self.current_weather = WeatherCondition.SUNNY
+            try:
+                await self._update_simulation_state()
+            except Exception as inner_e:
+                logger.error(f"Error in fallback simulation state update: {inner_e}")
 
     def _update_simulation_time(self, time_str: str):
         """Update simulation time"""
-        hour, minute = map(int, time_str.split(':'))
-        self._update_simulation_state(time(hour, minute))
+        if time_str:
+            try:
+                hour, minute = map(int, time_str.split(':'))
+                self._update_simulation_state(time(hour, minute))
+            except Exception as e:
+                logger.error(f"Error updating simulation time: {e}")
+        else:
+            # Use current time as fallback
+            current_time = datetime.now().time()
+            self._update_simulation_state(current_time)
 
-    def _update_simulation_state(self, custom_time: Optional[time] = None):
+    async def _update_simulation_state(self, custom_time: Optional[time] = None):
         """Update simulation state with new environmental conditions"""
-        simulation_time = SimulationTime(
-            datetime=datetime.now(),
-            custom_time=custom_time
-        )
+        simulation_time = None
         
-        self.simulator.update_environmental_state(
-            self.current_weather,
-            self.current_location,
-            simulation_time
-        )
+        try:
+            # Create simulation time object safely
+            current_datetime = datetime.now()
+            simulation_time = SimulationTime(
+                start_time=current_datetime,
+                custom_time=custom_time
+            )
+            
+            # Check if current_location is valid before proceeding
+            if not hasattr(self, 'current_location') or self.current_location is None:
+                logger.warning("Cannot update simulation state: current_location is None")
+                return
+                
+            # Get current weather data with error handling
+            weather_data = None
+            try:
+                weather_data = await self.weather_service.get_current_weather(
+                    LocationQuery(
+                        type=LocationType.LATLON,
+                        value=f"{self.current_location.latitude},{self.current_location.longitude}"
+                    )
+                )
+            except Exception as network_error:
+                logger.error(f"Error fetching weather data: {network_error}")
+                # Continue with None weather_data
+            
+            # Update simulation state with actual weather data (if available)
+            if hasattr(self, 'simulator') and self.simulator is not None:
+                if weather_data:
+                    self.simulator.update_environmental_state(
+                        self.current_weather,
+                        self.current_location,
+                        simulation_time,
+                        weather_data
+                    )
+                else:
+                    # Fallback to default state without weather data
+                    self.simulator.update_environmental_state(
+                        self.current_weather,
+                        self.current_location,
+                        simulation_time
+                    )
+            else:
+                logger.warning("Cannot update simulation state: simulator is None")
+            
+        except Exception as e:
+            logger.error(f"Error updating simulation state: {e}")
+            logger.exception("Full traceback:")
+            
+            # Attempt minimal fallback if simulation_time was created
+            if simulation_time and hasattr(self, 'simulator') and self.simulator is not None:
+                try:
+                    # Basic fallback without weather data
+                    self.simulator.update_environmental_state(
+                        WeatherCondition.SUNNY,  # Use default weather
+                        self.current_location,
+                        simulation_time
+                    )
+                except Exception as fallback_error:
+                    logger.error(f"Critical error in simulation fallback: {fallback_error}")
 
     def _update_location_options(self, locations: List[Dict]):
         """Update location select options"""
@@ -849,7 +1055,7 @@ class SmartHomePage:
         except Exception as e:
             logger.error(f"Error updating location options: {e}")
             
-    def _handle_location_select(self, event):
+    async def _handle_location_select(self, event):
         """Handle location selection"""
         try:
             logger.debug(f"Location select event: {event}")
@@ -886,8 +1092,9 @@ class SmartHomePage:
                 
             # Update current location
             self.current_location = Location(
-                country=location['country'],
                 region=location['name'],
+                latitude=40.7128,  # New York coordinates
+                longitude=-74.0060,
                 timezone=location.get('tz_id', 'UTC')
             )
             logger.debug(f"Updated current location: {self.current_location}")
@@ -906,14 +1113,124 @@ class SmartHomePage:
             # Store for weather fetch
             self._current_location_query = location_query
             
-            # Fetch weather data for the new location
-            logger.debug("Fetching weather data for new location")
-            asyncio.create_task(self._fetch_weather_data())
+            # Fetch weather data and update environmental state
+            logger.debug("Fetching weather data and updating environmental state for new location")
+            asyncio.create_task(self._update_location_and_weather())
             
         except Exception as e:
             logger.error(f"Error handling location select: {e}")
             logger.exception("Full traceback:")
             ui.notify('Error selecting location', type='negative')
+
+    async def _update_location_and_weather(self):
+        """Update both weather data and environmental state for new location"""
+        try:
+            # Get current weather data using the city-based query first
+            current_weather = self.weather_service.get_weather(self._current_location_query, self.include_aqi)
+            
+            if not current_weather and self.current_location:
+                # Fallback to coordinates if city query fails
+                fallback_query = LocationQuery(
+                    type=LocationType.CITY,  # Keep using CITY type instead of LATLON
+                    value=f"{self.current_location.region}"  # Just use the region name
+                )
+                current_weather = self.weather_service.get_weather(fallback_query, self.include_aqi)
+            
+            if current_weather:
+                # Extract weather condition from current weather data
+                condition_text = current_weather.get('description', '').lower()
+                weather_mapping = {
+                    'sunny': WeatherCondition.SUNNY,
+                    'partly cloudy': WeatherCondition.PARTLY_CLOUDY,
+                    'cloudy': WeatherCondition.CLOUDY,
+                    'overcast': WeatherCondition.OVERCAST,
+                    'light rain': WeatherCondition.LIGHT_RAIN,
+                    'rain': WeatherCondition.RAINY,
+                    'heavy rain': WeatherCondition.HEAVY_RAIN,
+                    'thunderstorm': WeatherCondition.STORMY,
+                    'light snow': WeatherCondition.LIGHT_SNOW,
+                    'snow': WeatherCondition.SNOWY,
+                    'heavy snow': WeatherCondition.HEAVY_SNOW,
+                    'fog': WeatherCondition.FOGGY,
+                    'windy': WeatherCondition.WINDY
+                }
+                
+                # Find best matching weather condition
+                matched_condition = WeatherCondition.SUNNY  # default
+                for key, value in weather_mapping.items():
+                    if key in condition_text:
+                        matched_condition = value
+                        break
+                
+                # Update current weather condition
+                self.current_weather = matched_condition
+                
+                # Prepare weather data with all necessary fields
+                weather_state = {
+                    'weather_condition': matched_condition.value,
+                    'temperature': current_weather.get('temperature', 20.0),
+                    'humidity': current_weather.get('humidity', 50.0),
+                    'pressure': current_weather.get('pressure', 1013.0),
+                    'wind_speed': current_weather.get('wind_speed', 0.0),
+                    'description': current_weather.get('description', ''),
+                    'air_quality': current_weather.get('air_quality', {})
+                }
+                
+                # Update environmental state with actual weather data
+                self.simulator.update_environmental_state(
+                    matched_condition,
+                    self.current_location,
+                    self.simulation_time,
+                    weather_state
+                )
+                logger.info(f"Updated environmental state for {self.current_location.region} with weather: {matched_condition.value}, humidity: {weather_state['humidity']}%")
+                
+                # Store the values we need to update in the UI
+                weather_select_value = matched_condition.value.replace('_', ' ').title()
+                weather_display_data = current_weather
+                location_region = self.current_location.region
+                
+                # Update UI elements safely using stored references
+                try:
+                    if hasattr(self, 'weather_select') and self.weather_select is not None:
+                        try:
+                            self.weather_select.value = weather_select_value
+                            await self.weather_select.update()
+                        except Exception as e:
+                            logger.error(f"Error updating weather select component: {e}")
+                    else:
+                        logger.warning("weather_select component not available for update")
+                    
+                    if hasattr(self, 'weather_result_card') and self.weather_result_card is not None:
+                        try:
+                            with self.weather_result_card:
+                                self.weather_result_card.clear()
+                                await self._update_weather_display(weather_display_data)
+                        except Exception as e:
+                            logger.error(f"Error updating weather result card: {e}")
+                    else:
+                        logger.warning("weather_result_card component not available for update")
+                    
+                    # Use a safe notification method that works in background tasks
+                    if hasattr(self, 'weather_result_card') and self.weather_result_card is not None:
+                        try:
+                            with self.weather_result_card:
+                                ui.label(f'Updated to {location_region}').classes('text-positive')
+                        except Exception as e:
+                            logger.error(f"Error adding update notification: {e}")
+                except Exception as e:
+                    logger.error(f"Error updating UI components: {e}")
+                
+            else:
+                logger.warning("No weather data received for location update")
+                # Log warning instead of using UI notification in background task
+                logger.warning('Could not fetch weather data for location')
+                
+        except Exception as e:
+            logger.error(f"Error updating location and weather: {e}")
+            logger.exception("Full traceback:")
+            # Log error instead of using UI notification in background task
+            logger.error('Error updating location data')
 
     def _handle_location_search(self, event):
         """Handle location search input for select filtering"""
@@ -940,14 +1257,168 @@ class SmartHomePage:
             self.search_results = []
             self._update_location_options(self.popular_cities)
 
+    def _map_weather_condition(self, condition: str) -> WeatherCondition:
+        """Enhanced weather condition mapping with more granular conditions"""
+        condition_lower = condition.lower()
+        
+        condition_mappings = {
+            WeatherCondition.SUNNY: [
+                'sunny', 'clear', 'fine', 'fair', 'bright'
+            ],
+            WeatherCondition.PARTLY_CLOUDY: [
+                'partly cloudy', 'scattered clouds'
+            ],
+            WeatherCondition.CLOUDY: [
+                'cloudy', 'mostly cloudy'
+            ],
+            WeatherCondition.OVERCAST: [
+                'overcast', 'dull'
+            ],
+            WeatherCondition.LIGHT_RAIN: [
+                'light rain', 'drizzle', 'light shower'
+            ],
+            WeatherCondition.RAINY: [
+                'rain', 'shower', 'precipitation'
+            ],
+            WeatherCondition.HEAVY_RAIN: [
+                'heavy rain', 'downpour', 'torrential'
+            ],
+            WeatherCondition.STORMY: [
+                'thunder', 'storm', 'lightning', 'squall'
+            ],
+            WeatherCondition.LIGHT_SNOW: [
+                'light snow', 'sleet', 'light flurries'
+            ],
+            WeatherCondition.SNOWY: [
+                'snow', 'snowfall'
+            ],
+            WeatherCondition.HEAVY_SNOW: [
+                'heavy snow', 'blizzard'
+            ],
+            WeatherCondition.FOGGY: [
+                'fog', 'mist', 'hazy'
+            ],
+            WeatherCondition.WINDY: [
+                'windy', 'blustery', 'gusty'
+            ]
+        }
+
+    def _generate_sensor_value(self, sensor: Sensor) -> float:
+        """Enhanced sensor value generation with realistic environmental factors"""
+        base_ranges = {
+            'temperature': {
+                'indoor': (18, 25),   # Indoor temperature range
+                'outdoor': (-10, 40)  # Outdoor temperature range
+            },
+            'humidity': {
+                'indoor': (30, 60),   # Indoor humidity range
+                'outdoor': (20, 100)  # Outdoor humidity range
+            },
+            'light': {
+                'indoor': (0, 500),    # Indoor light level (lux)
+                'outdoor': (0, 100000) # Outdoor light level (lux)
+            },
+            'air_quality': {
+                'indoor': (0, 500),    # Indoor AQI
+                'outdoor': (0, 500)    # Outdoor AQI
+            },
+            'pressure': (980, 1020),  # Atmospheric pressure (hPa)
+            'noise': {
+                'indoor': (30, 70),    # Indoor noise level (dB)
+                'outdoor': (40, 100)   # Outdoor noise level (dB)
+            },
+            'wind_speed': (0, 100),   # Wind speed (km/h)
+            'rain_rate': (0, 100),    # Rain rate (mm/h)
+            'uv_index': (0, 11)       # UV index
+        }
+        
+        sensor_type = sensor.type.lower()
+        location_type = 'indoor' if sensor.room and sensor.room.is_indoor else 'outdoor'
+        
+        # Get base range for sensor type and location
+        if isinstance(base_ranges[sensor_type], dict):
+            base_min, base_max = base_ranges[sensor_type][location_type]
+        else:
+            base_min, base_max = base_ranges[sensor_type]
+        
+        # Get environmental modifiers
+        env_modifier = get_sensor_value_modifier(self.env_state, sensor_type)
+        weather_impact = WeatherImpactFactors.get_impact_factors(
+            self.current_weather,
+            self.env_state.temperature_celsius,
+            self.env_state.humidity_percent
+        )
+        
+        # Calculate base value with time-based variation
+        hour = self.simulation_time.effective_time.hour
+        time_factor = math.sin((hour - 6) * math.pi / 12)  # Daily cycle
+        base_value = ((base_max - base_min) / 2) * (1 + time_factor) + base_min
+        
+        # Apply modifiers
+        if sensor_type == 'temperature':
+            modified_value = base_value + weather_impact.temperature_modifier
+            if location_type == 'indoor':
+                modified_value = self._adjust_indoor_temperature(modified_value)
+        elif sensor_type == 'humidity':
+            modified_value = base_value + weather_impact.humidity_modifier
+            if location_type == 'indoor':
+                modified_value = self._adjust_indoor_humidity(modified_value)
+        elif sensor_type == 'light':
+            modified_value = base_value * weather_impact.light_level_modifier
+            if location_type == 'indoor':
+                modified_value *= 0.1  # Indoor light levels are typically lower
+        elif sensor_type == 'air_quality':
+            modified_value = base_value + weather_impact.air_quality_modifier
+        else:
+            modified_value = base_value * env_modifier
+        
+        # Add small random variation
+        variation = random.uniform(-0.05, 0.05) * modified_value
+        final_value = modified_value + variation
+        
+        # Ensure value stays within bounds
+        return max(base_min, min(base_max, final_value))
+
+    def _adjust_indoor_temperature(self, outdoor_temp: float) -> float:
+        """Adjust indoor temperature based on outdoor temperature"""
+        target_temp = 22  # Typical indoor target temperature
+        adjustment_factor = 0.2  # How much outdoor temperature affects indoor
+        return target_temp + (outdoor_temp - target_temp) * adjustment_factor
+
+    def _adjust_indoor_humidity(self, outdoor_humidity: float) -> float:
+        """Adjust indoor humidity based on outdoor humidity"""
+        target_humidity = 45  # Typical indoor target humidity
+        adjustment_factor = 0.3  # How much outdoor humidity affects indoor
+        return target_humidity + (outdoor_humidity - target_humidity) * adjustment_factor
+
+    def _get_time_based_variation(self, sensor_type: str) -> float:
+        """Get time-based variation for sensor values"""
+        hour = self.simulation_time.effective_time.hour
+        
+        if sensor_type == 'temperature':
+            # Temperature peaks in afternoon (around 14:00)
+            return 5 * math.sin((hour - 6) * math.pi / 12)
+        elif sensor_type == 'humidity':
+            # Humidity highest in early morning
+            return -10 * math.sin((hour - 4) * math.pi / 12)
+        elif sensor_type == 'light':
+            # Light levels follow sun pattern
+            if 6 <= hour <= 18:  # Daylight hours
+                return 50 * math.sin((hour - 6) * math.pi / 12)
+            return 0  # Night time
+        
+        return 0
+
 async def update_floorplan(sensor_data):
     """Asynchronously update the floor plan view with the new sensor reading using the location provided in the sensor data."""
     sensor_id = sensor_data.get('id')
     reading = sensor_data.get('value')
     room = sensor_data.get('location')
     if room:
+        # Normalize room type before updating
+        normalized_room = room.lower().replace(' ', '_')
         # Update the UI element corresponding to the room
-        print(f"FloorPlan Update - Room: {room}, Sensor: {sensor_id}, Reading: {reading}")
+        print(f"FloorPlan Update - Room: {normalized_room}, Sensor: {sensor_id}, Reading: {reading}")
     else:
         print(f"Sensor update missing location info: {sensor_data}")
     await asyncio.sleep(0)  # Dummy await to ensure this is a coroutine

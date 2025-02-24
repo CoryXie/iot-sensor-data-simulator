@@ -24,35 +24,20 @@ class FloorPlan:
         self.device_states = {}
         self.sensor_states = {}
         self.device_room_map = {}  # New mapping to track device-room relationships
-        
-        with SessionLocal() as session:
-            try:
-                # Load rooms with their devices and sensors in one query
-                rooms = session.query(Room).options(
-                    joinedload(Room.devices).joinedload(Device.sensors)
-                ).all()
-                
-                # Initialize room mapping
-                self.rooms = {room.room_type: room for room in rooms}
-                
-                # Initialize devices and sensors
-                for room_type, room in self.rooms.items():
-                    self._initialize_room_devices(room_type, room.devices, session)
-                
-                logger.info(f'Initialized {len(self.rooms)} rooms with devices')
-                
-            except SQLAlchemyError as e:
-                logger.error(f"Database error during initialization: {str(e)}")
-            except Exception as e:
-                logger.error(f"Error during initialization: {str(e)}")
-        
         self.sensor_displays = {}
         self.room_labels = {}
         self.device_labels = {}
         self.device_elements = {}
-        self.db = SessionLocal
         self.update_lock = asyncio.Lock()
+        self.pending_updates = {}  # Track sensors that need UI updates
         self._setup_event_handlers()
+        
+        # Start the update processing task
+        ui.timer(0.1, self._process_updates, active=True)
+
+    def _normalize_room_type(self, room_type: str) -> str:
+        """Normalize room type for consistent comparison"""
+        return room_type.lower().strip().replace(" ", "_")
 
     def _get_default_value(self, sensor_type: str) -> float:
         """Get default value for a sensor type"""
@@ -158,51 +143,59 @@ class FloorPlan:
 
     def get_sensor_icon(self, sensor_type: str) -> str:
         """Map sensor types to appropriate icons"""
-        return {
+        icon_map = {
+            # Environmental sensors
             'temperature': 'thermostat',
             'humidity': 'water_drop',
-            'motion': 'motion_sensor',
-            'light': 'lightbulb_outline',
-            'door': 'door_sensor',
-            'window': 'window_closed',
-            'smoke': 'smoke_detector',
-            'air_quality': 'airwave',
-            'water': 'water_damage',
-            'energy': 'flash_on'
-        }.get(sensor_type.lower(), 'sensors')
-
-    def _create_room_card(self, room, container=None):
-        """Create a room card with a container for devices"""
-        try:
-            grid_container = container or ui.grid(columns=3).classes("gap-4 room-card-container")
+            'air_quality': 'air',
+            'co2': 'co2',
+            'pressure': 'speed',
+            'light': 'light_mode',
+            'brightness': 'brightness_high',
+            'color_temp': 'wb_sunny',
+            'uv': 'wb_sunny',
             
-            with grid_container:
-                with ui.card().classes('room-card p-4') as room_container:
-                    # Room header
-                    with ui.row().classes('w-full items-center gap-2 mb-4'):
-                        ui.icon('room').classes('text-primary')
-                        ui.label(f"{room.name}").classes('text-h6')
-                    
-                    # Create devices section
-                    with ui.column().classes('w-full gap-4') as devices_container:
-                        pass  # Devices will be added later
-                    
-                    # Store room elements
-                    self.room_elements[room.room_type] = {
-                        'container': room_container,
-                        'devices_container': devices_container,
-                        'devices': []
-                    }
-                    
-                    logger.debug(f"Created room card for {room.room_type}")
-                
-        except Exception as e:
-            logger.error(f"Error creating room card for {room.room_type}: {e}")
+            # Security sensors
+            'motion': 'motion_sensor',
+            'door': 'door_front',
+            'window': 'window',
+            'contact_sensor': 'sensor_door',
+            'presence': 'person_search',
+            'occupancy': 'person',
+            'camera': 'videocam',
+            
+            # Safety sensors
+            'smoke': 'detector_smoke',
+            'co': 'detector_alarm',
+            'gas': 'gas_meter',
+            'water_leak': 'water_damage',
+            'flood': 'water_damage',
+            
+            # Power/Energy sensors
+            'power': 'power',
+            'energy': 'bolt',
+            'voltage': 'electric_bolt',
+            'current': 'electric_meter',
+            'battery': 'battery_full',
+            
+            # Status indicators
+            'status': 'info',
+            'state': 'toggle_on',
+            'mode': 'tune',
+            'scene': 'view_agenda',
+            
+            # Default icon for unknown types
+            'default': 'sensors'
+        }
+        
+        # Normalize sensor type and get appropriate icon
+        normalized_type = sensor_type.lower().strip()
+        return icon_map.get(normalized_type, icon_map['default'])
 
     def initialize_floor_plan(self, container=None):
         """Initialize the floor plan visualization with rooms and devices"""
         try:
-            with self.db() as session:
+            with SessionLocal() as session:
                 # Load all rooms with devices and sensors
                 rooms = session.query(Room).options(
                     joinedload(Room.devices).joinedload(Device.sensors)
@@ -211,27 +204,60 @@ class FloorPlan:
                 # Create room elements first
                 for room in rooms:
                     self._create_room_card(room, container)
+                    # Store room data for reference with normalized room type
+                    normalized_room_type = self._normalize_room_type(room.room_type)
+                    self.rooms[normalized_room_type] = room
                 
-                # Store room data for reference
-                self.rooms = {room.room_type: room for room in rooms}
-                
-                # Initialize devices and sensors
-                for room_type, room in self.rooms.items():
-                    self._initialize_room_devices(room_type, room.devices, session)
+                # Initialize devices and sensors after all rooms are created
+                for room in rooms:
+                    normalized_room_type = self._normalize_room_type(room.room_type)
+                    self._initialize_room_devices(normalized_room_type, room.devices, session)
                 
                 logger.info(f'Initialized {len(self.rooms)} rooms with devices')
                 
         except Exception as e:
             logger.error(f"Error initializing floor plan: {e}")
+            raise
+
+    def _create_room_card(self, room, container=None):
+        """Create a room card with a container for devices"""
+        try:
+            grid_container = container or ui.grid(columns=3).classes("gap-4 room-card-container")
+            
+            with grid_container:
+                with ui.card().classes('room-card p-6 shadow-lg hover:shadow-xl transition-shadow duration-200 bg-white') as room_container:
+                    # Room header with improved styling
+                    with ui.row().classes('w-full items-center gap-4 mb-6 border-b border-gray-100 pb-4'):
+                        with ui.row().classes('min-w-[32px] justify-center'):
+                            ui.icon('room').classes('text-primary text-2xl')
+                        ui.label(f"{room.name}").classes('text-xl font-bold text-gray-800 truncate')
+                    
+                    # Create devices section with better spacing
+                    with ui.column().classes('w-full gap-6') as devices_container:
+                        pass  # Devices will be added later
+                    
+                    # Store room elements using normalized room type
+                    normalized_room_type = self._normalize_room_type(room.room_type)
+                    self.room_elements[normalized_room_type] = {
+                        'container': room_container,
+                        'devices_container': devices_container,
+                        'devices': []
+                    }
+                    
+                    logger.debug(f"Created room card for {room.room_type} (normalized: {normalized_room_type})")
+                
+        except Exception as e:
+            logger.error(f"Error creating room card for {room.room_type}: {e}")
 
     def _initialize_room_devices(self, room_type: str, devices: List[Device], session):
         """Initialize devices for a room with proper sensor binding"""
         try:
-            if room_type not in self.room_elements:
-                logger.error(f"Room {room_type} not found in room elements")
+            normalized_room_type = self._normalize_room_type(room_type)
+            if normalized_room_type not in self.room_elements:
+                logger.error(f"Room {room_type} (normalized: {normalized_room_type}) not found in room elements")
                 return
                 
-            room_card = self.room_elements[room_type]
+            room_card = self.room_elements[normalized_room_type]
             
             for device in devices:
                 try:
@@ -260,8 +286,8 @@ class FloorPlan:
                     # Add device to room
                     self._add_device(room_card, device_data)
                     
-                    # Store room mapping
-                    self.device_room_map[device.id] = room_type
+                    # Store room mapping using normalized room type
+                    self.device_room_map[device.id] = normalized_room_type
                     
                     logger.debug(f"Initialized device {device.name} with {len(device_data['sensors'])} sensors in {room_type}")
                     
@@ -284,17 +310,17 @@ class FloorPlan:
                 return
                 
             with container:
-                # Create device card
-                with ui.card().classes('device-card w-full'):
-                    # Device header
-                    with ui.row().classes('w-full items-center gap-2'):
-                        ui.icon('device_hub').classes('text-primary')
-                        ui.label(device_name).classes('text-lg font-bold')
+                # Create device card with improved styling
+                with ui.card().classes('device-card w-full p-4 shadow-md hover:shadow-lg transition-shadow duration-200'):
+                    # Device header with improved alignment
+                    with ui.row().classes('w-full items-center justify-start gap-3 mb-3 pb-2 border-b border-gray-100'):
+                        ui.icon('device_hub').classes('text-primary text-xl min-w-[28px]')
+                        ui.label(device_name).classes('text-lg font-semibold text-gray-800 truncate')
                     
-                    # Create sensors container
-                    sensors_container = ui.column().classes('w-full gap-1 mt-2')
+                    # Create sensors container with better spacing
+                    sensors_container = ui.column().classes('w-full gap-2 mt-3')
                     
-                    # Create sensor displays
+                    # Create sensor displays with improved layout
                     sensor_elements = {}
                     for sensor in device_data.get('sensors', []):
                         with sensors_container:
@@ -305,22 +331,38 @@ class FloorPlan:
                                 if isinstance(value, (int, float)):
                                     value = f"{value:.2f}"
                                 
-                                # Create sensor row
-                                with ui.row().classes('w-full items-center'):
-                                    ui.icon('sensors').classes('text-primary')
-                                    label = ui.label(f"{sensor.get('name', '')}: {value} {sensor.get('unit', '')}")
-                                    label.classes('sensor-value text-sm flex-grow')
-                                    sensor_elements[sensor_id] = label
-                                    logger.debug(f"Created sensor element for {sensor.get('name')} (ID: {sensor_id})")
+                                # Get sensor type and icon
+                                sensor_type = sensor.get('type', '').lower()
+                                icon = self.get_sensor_icon(sensor_type)
+                                
+                                # Format the sensor name and value
+                                sensor_name = sensor.get('name', '')
+                                unit = sensor.get('unit', '')
+                                formatted_value = f"{value} {unit}".strip()
+                                
+                                # Create sensor row with improved alignment and spacing
+                                with ui.card().classes('w-full bg-gray-50/50 hover:bg-gray-100/50 transition-colors duration-200'):
+                                    with ui.row().classes('w-full items-center px-3 py-2 gap-3'):
+                                        # Icon on the left
+                                        ui.icon(icon).classes('text-primary text-xl min-w-[24px]')
+                                        
+                                        # Name with flex-grow to take available space
+                                        ui.label(sensor_name).classes('text-sm text-gray-600 flex-grow truncate')
+                                        
+                                        # Value and unit right-aligned
+                                        value_label = ui.label(formatted_value)
+                                        value_label.classes('sensor-value text-sm font-medium text-gray-800 tabular-nums text-right')
+                                    
+                                    # Store sensor display references
+                                    sensor_elements[sensor_id] = value_label
+                                    self.sensor_displays[sensor_id] = value_label
+                                    
+                                    logger.debug(f"Created sensor element for {sensor_name} (ID: {sensor_id})")
                     
-                    # Create counter as a chip
-                    counter = ui.label("Updates: 0").classes('counter-chip')
-                    
-                    # Store elements
+                    # Store elements - removing the counter but keeping the dictionary structure
                     if device_id not in self.device_elements:
                         self.device_elements[device_id] = {}
                     self.device_elements[device_id].update({
-                        'counter': counter,
                         'container': container,
                         'sensors': sensor_elements
                     })
@@ -415,6 +457,11 @@ class FloorPlan:
     def _setup_event_handlers(self):
         """Set up event handlers for sensor updates"""
         try:
+            # First remove any existing handlers
+            self.event_system.remove_all_handlers('device_update')
+            self.event_system.remove_all_handlers('sensor_update')
+            
+            # Register our handlers
             self.event_system.on('device_update', self._handle_device_update)
             self.event_system.on('sensor_update', self._handle_sensor_update)
             logger.info("Event handlers set up successfully")
@@ -448,60 +495,11 @@ class FloorPlan:
                 logger.error(f"Room {room_type} not found in room elements")
                 return
                 
-            # Update counter element
-            try:
-                device_elements = self.device_elements.get(device_id, {})
-                counter_element = device_elements.get('counter')
-                container = device_elements.get('container')
-                
-                if counter_element and container:
-                    counter_element.text = f"Updates: {updates}"
-                else:
-                    logger.warning(f"Missing counter element or container for device {device_id}")
-                    # Don't try to recreate - wait for next UI refresh
-                    
-            except Exception as e:
-                logger.error(f"Error updating counter: {str(e)}")
+            # No need to update the counter element as it has been removed
+            logger.debug(f"Device update processed for {device_name} (ID: {device_id}, updates: {updates})")
                 
         except Exception as e:
             logger.error(f"Error in device update handler: {str(e)}")
-
-    async def _recreate_device_counter(self, device_id, device_name, counter_value):
-        """Recreate a device counter element"""
-        try:
-            # Get room type from our mapping
-            room_type = self.device_room_map.get(device_id)
-            if not room_type:
-                logger.error(f"No room type found for device {device_id}")
-                return None
-                
-            # Get room card
-            room_card = self.room_elements.get(room_type)
-            if not room_card:
-                logger.error(f"No room card found for room type {room_type}")
-                return None
-                
-            # Create counter in room container
-            container = room_card.get('container')
-            if not container:
-                logger.error(f"No container found in room card for {room_type}")
-                return None
-                
-            with container:
-                counter = ui.label(f"Updates: {counter_value}").classes('counter-chip')
-                
-                # Update device elements dictionary
-                if device_id not in self.device_elements:
-                    self.device_elements[device_id] = {}
-                self.device_elements[device_id]['counter'] = counter
-                self.device_elements[device_id]['container'] = container
-                
-                logger.info(f"Recreated counter element for device {device_name} (ID: {device_id})")
-                return counter
-                
-        except Exception as e:
-            logger.error(f"Error recreating counter element: {str(e)}")
-            return None
 
     def update_device_status(self, device_id: int, status: str):
         if device_id in self.device_labels:
@@ -549,6 +547,21 @@ class FloorPlan:
         """Normalize room name for consistent comparison"""
         return room_name.lower().strip().replace(" ", "_")
 
+    async def _batch_update(self):
+        """Process all pending updates at once"""
+        try:
+            if not self.pending_updates:
+                return
+                
+            logger.debug(f"Processing batch update for {len(self.pending_updates)} sensors")
+            self.pending_updates.clear()
+            
+            # Trigger a global UI refresh
+            ui.update()
+            
+        except Exception as e:
+            logger.error(f"Error in batch update: {str(e)}")
+
     async def _handle_sensor_update(self, data):
         """Handle sensor update events using data binding"""
         try:
@@ -566,22 +579,68 @@ class FloorPlan:
                 logger.debug(f"Skipping sensor update due to missing data: {data}")
                 return
                 
-            # Find the sensor element
+            # Find the sensor element and its container
             device_elements = self.device_elements.get(device_id, {})
             sensor_elements = device_elements.get('sensors', {})
             sensor_label = sensor_elements.get(sensor_id)
+            container = device_elements.get('container')
             
-            if sensor_label:
-                # Format the value nicely
-                formatted_value = f"{new_value:.2f}" if isinstance(new_value, (int, float)) else str(new_value)
-                sensor_label.text = f"{sensor_name}: {formatted_value} {unit}"
-                logger.debug(f"Updated sensor {sensor_id} display to: {formatted_value} {unit}")
+            if sensor_label and container:
+                try:
+                    # Format the value nicely
+                    formatted_value = f"{new_value:.2f}" if isinstance(new_value, (int, float)) else str(new_value)
+                    formatted_value = f"{formatted_value} {unit}".strip()
+                    
+                    # Store the update data
+                    self.pending_updates[sensor_id] = {
+                        'label': sensor_label,
+                        'container': container,
+                        'value': formatted_value,
+                        'unit': unit
+                    }
+                    
+                except Exception as e:
+                    logger.error(f"Error queueing sensor update: {str(e)}")
             else:
-                logger.debug(f"No UI element found for sensor {sensor_id} in device {device_id}")
+                if not sensor_label:
+                    logger.debug(f"No UI element found for sensor {sensor_id} in device {device_id}")
+                if not container:
+                    logger.debug(f"No container found for device {device_id}")
+                
+            # Can safely update the label text since we have the reference
+            if sensor_label:
+                sensor_label.text = formatted_value
                 
         except Exception as e:
             logger.error(f"Error handling sensor update: {str(e)}")
             logger.debug(f"Problematic event data: {data}")
+
+    def _process_updates(self):
+        """Process all pending sensor updates"""
+        try:
+            if not self.pending_updates:
+                return
+                
+            # Create a concise batch update summary
+            updates = [f"{sid}:{data['value']}{data['unit']}" for sid, data in self.pending_updates.items()]
+            if updates:
+                logger.debug(f"Batch updates: {', '.join(updates)}")
+            
+            # Process each update
+            for sensor_id, update_data in self.pending_updates.items():
+                try:
+                    label = update_data['label']
+                    text = update_data['value']
+                    label.text = text
+                except Exception as e:
+                    logger.error(f"Error updating sensor {sensor_id}: {str(e)}")
+            
+            # Clear pending updates after processing
+            self.pending_updates.clear()
+            
+        except Exception as e:
+            logger.error(f"Error in update processing: {str(e)}")
+            self.pending_updates.clear()
 
     def create_floor_plan(self, container=None):
         """Generate floor plan visualization with data binding"""

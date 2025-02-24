@@ -20,13 +20,13 @@ class Device(BaseModel):
     __table_args__ = {'extend_existing': True}
     
     id: Mapped[int] = Column(Integer, primary_key=True)
-    name = Column(String(100))
-    type = Column(String(50))
+    name = Column(String(100), nullable=False)
+    type = Column(String(50), nullable=False, default='unknown')  # Device type (e.g., 'environmental_monitor', 'light_control', etc.)
     description: Mapped[Optional[str]] = Column(String(200))
     location: Mapped[Optional[str]] = Column(String(50))
     icon: Mapped[Optional[str]] = Column(String(50), default='devices')
     container_id: Mapped[int] = Column(Integer, ForeignKey('containers.id'))
-    is_active: Mapped[bool] = Column(Boolean, default=True)
+    is_active: Mapped[bool] = Column(Boolean, default=False)
     created_at: Mapped[Optional[datetime]] = Column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[Optional[datetime]] = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     room_id = Column(Integer, ForeignKey('rooms.id'))

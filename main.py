@@ -26,10 +26,15 @@ import sys
 from src.utils.initial_data import initialize_all_data, initialize_rooms, initialize_options
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
+from src.utils.event_system import EventSystem
+from src.utils.socketio_patch import apply_socketio_patches
 
 # Configure logging
 os.makedirs('logs', exist_ok=True)
 logger.add("logs/app.log", rotation="500 MB", level="INFO")
+
+# Create a global event system instance
+event_system = EventSystem()
 
 def create_intro_content():
     """Create modern introduction content"""
@@ -87,6 +92,17 @@ def init():
     """Initialize the application"""
     logger.info("Initializing application")
     
+    # Attempt to apply Socket.IO patches but continue even if they fail
+    try:
+        patch_result = apply_socketio_patches()
+        if not patch_result:
+            logger.warning("Socket.IO patches not fully applied - some features may have limited functionality")
+        else:
+            logger.info("Socket.IO patches applied successfully")
+    except Exception as e:
+        logger.error(f"Error applying Socket.IO patches: {e}")
+        logger.warning("Continuing without Socket.IO patches - some features may have limited functionality")
+    
     # Database setup
     ensure_database()
     initialize_all_data()
@@ -98,47 +114,55 @@ def init():
     @ui.page('/')
     def home():
         """Create the main application page with navigation tabs"""
-        with ui.column().classes('w-full min-h-screen bg-gray-50'):
-            # Create navigation at the top
-            nav = Navigation()
+        nav = Navigation()
+        with ui.header().style('background-color: #3874c8').classes('z-50'):
             nav.setup_navigation()
-            
-            # Create the introduction content
+        with ui.column().classes('w-full min-h-screen bg-gray-50'):
             create_intro_content()
 
     @ui.page('/smart_home')
     def smart_home():
         """Smart Home visualization page"""
-        with ui.column().classes('w-full min-h-screen bg-gray-50'):
+        try:
             nav = Navigation()
-            nav.setup_navigation()
-            smart_home_page = SmartHomePage()
-            smart_home_page.build()
+            with ui.header().style('background-color: #3874c8').classes('z-50'):
+                nav.setup_navigation()
+            with ui.column().classes('w-full min-h-screen bg-gray-50'):
+                smart_home_page = SmartHomePage(event_system)
+                smart_home_page.build()
+        except Exception as e:
+            logger.error(f"Error loading smart home page: {str(e)}")
+            with ui.column().classes('w-full p-4'):
+                ui.label('Error loading smart home page:').classes('text-red-500 font-bold')
+                ui.label(str(e)).classes('text-red-500')
 
     @ui.page('/containers')
     def containers():
         """Containers management page"""
-        with ui.column().classes('w-full min-h-screen bg-gray-50'):
-            nav = Navigation()
+        nav = Navigation()
+        with ui.header().style('background-color: #3874c8').classes('z-50'):
             nav.setup_navigation()
+        with ui.column().classes('w-full min-h-screen bg-gray-50'):
             containers_page = ContainersPage(iot_hub_helper=iot_hub_helper)
             containers_page.create_content()
 
     @ui.page('/devices')
     def devices():
         """Devices management page"""
-        with ui.column().classes('w-full min-h-screen bg-gray-50'):
-            nav = Navigation()
+        nav = Navigation()
+        with ui.header().style('background-color: #3874c8').classes('z-50'):
             nav.setup_navigation()
+        with ui.column().classes('w-full min-h-screen bg-gray-50'):
             devices_page = DevicesPage(iot_hub_helper=iot_hub_helper)
             devices_page.create_content()
 
     @ui.page('/sensors')
     def sensors():
         """Sensors management page"""
-        with ui.column().classes('w-full min-h-screen bg-gray-50'):
-            nav = Navigation()
+        nav = Navigation()
+        with ui.header().style('background-color: #3874c8').classes('z-50'):
             nav.setup_navigation()
+        with ui.column().classes('w-full min-h-screen bg-gray-50'):
             sensors_page = SensorsPage(iot_hub_helper=iot_hub_helper)
             sensors_page.create_content()
 
