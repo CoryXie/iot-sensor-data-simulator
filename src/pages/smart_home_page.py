@@ -317,10 +317,10 @@ class SmartHomePage:
                     
                     with ui.column().classes('flex-1'):
                         self.location_type_select = ui.select(
+                            label='Location Type',
                             options=location_type_options,
                             value=location_type_options[0],
-                            label="Location Type"
-                        ).props('outlined options-dense').classes('w-full')
+                        ).props('outlined dense').classes('w-64')  # Wider select
                         self.location_type_select.on('update:model-value', 
                                                    lambda e: self._handle_location_type_change(e))
                 
@@ -336,7 +336,7 @@ class SmartHomePage:
                             label='Search City',
                             options=[],
                             with_input=True,
-                        ).props('outlined dense').classes('w-full')
+                        ).props('outlined dense').classes('w-96')  # Wider select
                         
                         # Initialize search results and set initial options
                         self.search_results = []
@@ -349,23 +349,61 @@ class SmartHomePage:
                     with ui.column().classes('flex-1').bind_visibility_from(
                         self.location_type_select, 'value',
                         lambda v: v.lower() == LocationType.LATLON.value):
-                        self.latitude_input = ui.number(
-                            label='Latitude',
-                            placeholder='-90 to 90'
-                        ).props('outlined dense').classes('w-full')
-                        self.longitude_input = ui.number(
-                            label='Longitude',
-                            placeholder='-180 to 180'
-                        ).props('outlined dense').classes('w-full')
+                        with ui.row().classes('gap-4'):
+                            self.latitude_input = ui.number(
+                                label='Latitude',
+                                min=-90,
+                                max=90,
+                                step=0.000001,
+                                format='%.6f'
+                            ).props('outlined dense').classes('w-48')
+                            
+                            self.longitude_input = ui.number(
+                                label='Longitude',
+                                min=-180,
+                                max=180,
+                                step=0.000001,
+                                format='%.6f'
+                            ).props('outlined dense').classes('w-48')
                     
-                    # Other location type inputs...
+                    # Postcode input
+                    with ui.column().classes('flex-1').bind_visibility_from(
+                        self.location_type_select, 'value',
+                        lambda v: v.lower() == LocationType.POSTCODE.value):
+                        
+                        self.postcode_input = ui.input(
+                            label='Postal Code'
+                        ).props('outlined dense').classes('w-48')
                     
-                    # Fetch Weather Button
-                    ui.button('Fetch Weather Data', 
-                             on_click=self._fetch_weather_data).classes('bg-blue-500 text-white')
-                
-                # Weather Result Display
-                self.weather_result_card = ui.card().classes('w-full p-4 mt-4')
+                    # IATA input
+                    with ui.column().classes('flex-1').bind_visibility_from(
+                        self.location_type_select, 'value',
+                        lambda v: v.lower() == LocationType.IATA.value):
+                        
+                        self.iata_input = ui.input(
+                            label='IATA Code'
+                        ).props('outlined dense').classes('w-48')
+                    
+                    # METAR input
+                    with ui.column().classes('flex-1').bind_visibility_from(
+                        self.location_type_select, 'value',
+                        lambda v: v.lower() == LocationType.METAR.value):
+                        
+                        self.metar_input = ui.input(
+                            label='METAR Code'
+                        ).props('outlined dense').classes('w-48')
+                    
+                    # IP input
+                    with ui.column().classes('flex-1').bind_visibility_from(
+                        self.location_type_select, 'value',
+                        lambda v: v.lower() == LocationType.IP.value):
+                        
+                        self.ip_input = ui.input(
+                            label='IP Address (leave empty for auto)'
+                        ).props('outlined dense').classes('w-64')
+                    
+                    # Weather result card
+                    self.weather_result_card = ui.card().classes('w-full p-4 mt-4')
                 
                 # Time and Weather Controls
                 with ui.row().classes('items-center gap-4 mt-4'):
@@ -661,11 +699,13 @@ class SmartHomePage:
                 with ui.row().classes('w-full gap-4 mt-2'):
                     with ui.card().classes('flex-1 p-4'):
                         ui.label('Temperature').classes('text-lg font-bold')
-                        ui.label(f"{weather_data.get('temp_c', 'N/A')}°C / {weather_data.get('temp_f', 'N/A')}°F")
+                        temp_c = weather_data.get('temperature')
+                        temp_f = (temp_c * 9/5 + 32) if temp_c is not None else None
+                        ui.label(f"{temp_c if temp_c is not None else 'N/A'}°C / {temp_f if temp_f is not None else 'N/A'}°F")
                     
                     with ui.card().classes('flex-1 p-4'):
                         ui.label('Condition').classes('text-lg font-bold')
-                        ui.label(weather_data.get('condition', {}).get('text', 'N/A'))
+                        ui.label(weather_data.get('description', 'N/A'))
                     
                     with ui.card().classes('flex-1 p-4'):
                         ui.label('Humidity').classes('text-lg font-bold')
@@ -674,21 +714,36 @@ class SmartHomePage:
                 if weather_data.get('air_quality'):
                     with ui.card().classes('w-full p-4 mt-2'):
                         ui.label('Air Quality').classes('text-lg font-bold')
-                        aqi = weather_data['air_quality'].get('us-epa-index', 'N/A')
-                        ui.label(f"US EPA Index: {aqi}")
+                        with ui.row().classes('w-full gap-4'):
+                            with ui.column().classes('flex-1'):
+                                ui.label('PM2.5').classes('font-bold')
+                                ui.label(f"{weather_data['air_quality'].get('pm2_5', 'N/A')} μg/m³")
+                            with ui.column().classes('flex-1'):
+                                ui.label('PM10').classes('font-bold')
+                                ui.label(f"{weather_data['air_quality'].get('pm10', 'N/A')} μg/m³")
+                            with ui.column().classes('flex-1'):
+                                ui.label('CO').classes('font-bold')
+                                ui.label(f"{weather_data['air_quality'].get('co', 'N/A')} μg/m³")
+                            with ui.column().classes('flex-1'):
+                                ui.label('NO2').classes('font-bold')
+                                ui.label(f"{weather_data['air_quality'].get('no2', 'N/A')} μg/m³")
+                            with ui.column().classes('flex-1'):
+                                ui.label('O3').classes('font-bold')
+                                ui.label(f"{weather_data['air_quality'].get('o3', 'N/A')} μg/m³")
                 
                 # Update simulator with real weather data
                 self._update_simulation_with_weather(weather_data)
         
         except Exception as e:
             logger.error(f"Error updating weather display: {e}")
+            logger.exception("Full traceback:")
             ui.notify('Error updating weather display', type='negative')
 
     def _update_simulation_with_weather(self, weather_data: dict):
         """Update simulation with real weather data"""
         try:
             # Map weather condition to our enum
-            condition_text = weather_data.get('condition', {}).get('text', '').lower()
+            condition_text = weather_data.get('description', '').lower()
             weather_mapping = {
                 'sunny': WeatherCondition.SUNNY,
                 'partly cloudy': WeatherCondition.PARTLY_CLOUDY,
