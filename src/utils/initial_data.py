@@ -161,64 +161,204 @@ def initialize_options():
             raise
 
 def initialize_devices_and_sensors():
-    with SessionLocal() as session:
+    """Initialize smart home devices and their sensors"""
+    with db_session() as session:
         try:
-            # Clear existing data
-            session.query(Sensor).delete()
-            session.query(Device).delete()
+            logger.info("Initializing devices and sensors...")
+            rooms = session.query(Room).all()
             
-            # Track created devices to avoid duplicates
-            created_devices = {}  # (room_name, device_name) -> device
+            if not rooms:
+                logger.warning("No rooms found! Please initialize rooms first.")
+                return
             
-            for room_name, template in ROOM_TEMPLATES.items():
-                room = session.query(Room).filter_by(name=room_name).first()
-                if not room:
-                    logger.error(f"Room {room_name} not found during device initialization")
-                    continue
+            # Check if whole home AC exists
+            whole_home_ac = session.query(Device).filter_by(type='hvac_system').first()
+            
+            # Check if living room exists
+            living_room = next((room for room in rooms if room.room_type == 'living_room'), None)
+            if living_room and not whole_home_ac:
+                # Add whole home AC (once)
+                whole_home_ac = Device(
+                    name="Whole Home AC",
+                    type="hvac_system",
+                    description="Central air conditioning system",
+                    icon="mdi-air-conditioner",
+                    room=living_room
+                )
+                session.add(whole_home_ac)
                 
-                for device_name in template['devices']:
-                    device_template = DEVICE_TEMPLATES[device_name]
-                    device_key = (room_name, device_name)
-                    
-                    # Skip if device already exists for this room
-                    if device_key in created_devices:
-                        continue
-                        
-                    # Create device with explicit room assignment and location
-                    device = Device(
-                        name=f"{room_name} {device_name}",
-                        type=device_template['type'],
-                        room=room,  # Direct relationship assignment
-                        location=room_name  # Set location explicitly
+                # Add sensors to AC
+                for sensor_data in DEVICE_TEMPLATES['Whole Home AC']['sensors']:
+                    sensor = Sensor(
+                        name=sensor_data['name'],
+                        type=sensor_data['type'],
+                        unit=sensor_data['unit'],
+                        min_value=sensor_data['min_value'],
+                        max_value=sensor_data['max_value'],
+                        device=whole_home_ac
                     )
-                    session.add(device)
-                    session.flush()  # Ensure device ID is generated
+                    # Set default values
+                    if sensor.type == 'power':
+                        sensor.current_value = 0  # Off by default
+                    elif sensor.type == 'set_temperature':
+                        sensor.current_value = 22.0  # Default temperature
+                    elif sensor.type == 'mode':
+                        sensor.current_value = 0  # Auto mode
+                    elif sensor.type == 'fan_speed':
+                        sensor.current_value = 3  # Medium speed
                     
-                    # Store reference to created device
-                    created_devices[device_key] = device
+                    session.add(sensor)
+                
+                logger.info(f"Added whole home AC system to {living_room.name}")
+            
+            # Add a thermostat to each bedroom if it doesn't exist
+            for room in rooms:
+                if room.room_type == 'bedroom' and not session.query(Device).filter_by(type='thermostat', room_id=room.id).first():
+                    # Add thermostat
+                    thermostat = Device(
+                        name=f"{room.name} Thermostat",
+                        type="thermostat",
+                        description="Smart room temperature control",
+                        icon="mdi-thermostat",
+                        room=room
+                    )
+                    session.add(thermostat)
                     
-                    logger.debug(f"Created device {device.name} (ID: {device.id}) "
-                                f"in room {room.name} (ID: {room.id})")
-                    
-                    # Create sensors
-                    for sensor_template in device_template['sensors']:
+                    # Add sensors to thermostat
+                    for sensor_data in DEVICE_TEMPLATES['Smart Thermostat']['sensors']:
                         sensor = Sensor(
-                            name=sensor_template['name'],
-                            type=sensor_template['type'],
-                            unit=sensor_template.get('unit'),
-                            device=device,  # Direct device assignment
-                            room=room      # Explicit room assignment
+                            name=sensor_data['name'],
+                            type=sensor_data['type'],
+                            unit=sensor_data['unit'],
+                            min_value=sensor_data['min_value'],
+                            max_value=sensor_data['max_value'],
+                            device=thermostat
                         )
+                        # Set default values
+                        if sensor.type == 'power':
+                            sensor.current_value = 0  # Off by default
+                        elif sensor.type == 'set_temperature':
+                            sensor.current_value = 22.0  # Default temperature
+                        elif sensor.type == 'mode':
+                            sensor.current_value = 0  # Auto mode
+                        
                         session.add(sensor)
-                        logger.debug(f"Created sensor {sensor.name} (ID: None) "
-                                    f"for device {device.name}")
+                    
+                    logger.info(f"Added thermostat to {room.name}")
+                
+                # Add smart blinds to living room, bedrooms and office
+                if room.room_type in ['living_room', 'bedroom', 'office'] and not session.query(Device).filter_by(type='blinds', room_id=room.id).first():
+                    # Add blinds
+                    blinds = Device(
+                        name=f"{room.name} Smart Blinds",
+                        type="blinds",
+                        description="Automated window blinds",
+                        icon="mdi-blinds",
+                        room=room
+                    )
+                    session.add(blinds)
+                    
+                    # Add sensors to blinds
+                    for sensor_data in DEVICE_TEMPLATES['Smart Blinds']['sensors']:
+                        sensor = Sensor(
+                            name=sensor_data['name'],
+                            type=sensor_data['type'],
+                            unit=sensor_data['unit'],
+                            min_value=sensor_data['min_value'],
+                            max_value=sensor_data['max_value'],
+                            device=blinds
+                        )
+                        # Set default values
+                        if sensor.type == 'position':
+                            sensor.current_value = 50  # Half open by default
+                        elif sensor.type == 'mode':
+                            sensor.current_value = 0  # Manual mode
+                        
+                        session.add(sensor)
+                    
+                    logger.info(f"Added smart blinds to {room.name}")
+                
+            # Find if there's a garden/patio/outdoor space
+            outdoor_room = next((room for room in rooms if not room.is_indoor), None)
+            if outdoor_room and not session.query(Device).filter_by(type='irrigation', room_id=outdoor_room.id).first():
+                # Add irrigation system
+                irrigation = Device(
+                    name=f"{outdoor_room.name} Irrigation",
+                    type="irrigation",
+                    description="Automated garden watering system",
+                    icon="mdi-water-pump",
+                    room=outdoor_room
+                )
+                session.add(irrigation)
+                
+                # Add sensors to irrigation system
+                for sensor_data in DEVICE_TEMPLATES['Smart Irrigation']['sensors']:
+                    sensor = Sensor(
+                        name=sensor_data['name'],
+                        type=sensor_data['type'],
+                        unit=sensor_data['unit'],
+                        min_value=sensor_data['min_value'],
+                        max_value=sensor_data['max_value'],
+                        device=irrigation
+                    )
+                    # Set default values
+                    if sensor.type == 'moisture':
+                        sensor.current_value = 40  # Default moisture
+                    elif sensor.type == 'flow':
+                        sensor.current_value = 0  # No flow by default
+                    elif sensor.type == 'schedule':
+                        sensor.current_value = 0  # No schedule by default
+                    
+                    session.add(sensor)
+                
+                logger.info(f"Added irrigation system to {outdoor_room.name}")
+            
+            # Add standard devices to rooms that don't have them yet
+            for room in rooms:
+                for device_name in ROOM_TEMPLATES.get(room.name, {}).get('devices', []):
+                    # Check if device already exists in this room
+                    existing_device = session.query(Device).filter_by(
+                        name=f"{room.name} {device_name}", 
+                        room_id=room.id
+                    ).first()
+                    
+                    if not existing_device:
+                        # Get device template
+                        device_template = DEVICE_TEMPLATES.get(device_name)
+                        if not device_template:
+                            logger.warning(f"No template found for device: {device_name}")
+                            continue
+                        
+                        # Create device
+                        device = Device(
+                            name=f"{room.name} {device_name}",
+                            type=device_template['type'],
+                            description=device_template['description'],
+                            icon=device_template.get('icon', 'mdi-devices'),
+                            room=room
+                        )
+                        session.add(device)
+                        logger.info(f"Added device {device.name} to {room.name}")
+                        
+                        # Create sensors for device
+                        for sensor_template in device_template.get('sensors', []):
+                            sensor = Sensor(
+                                name=sensor_template['name'],
+                                type=sensor_template['type'],
+                                unit=sensor_template.get('unit', ''),
+                                min_value=sensor_template.get('min_value', 0),
+                                max_value=sensor_template.get('max_value', 100),
+                                device=device,
+                                room=room
+                            )
+                            session.add(sensor)
+                            logger.debug(f"Added sensor {sensor.name} to {device.name}")
             
             session.commit()
-            logger.success("Devices and sensors initialized with proper relationships")
+            logger.success("Successfully initialized devices and sensors")
         except Exception as e:
             session.rollback()
-            logger.error(f"Device and sensor initialization failed: {e}")
-            raise
+            logger.error(f"Error initializing devices and sensors: {e}")
 
 def initialize_all_data():
     """Initialize all default data (rooms, options, scenarios)."""

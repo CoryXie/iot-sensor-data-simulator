@@ -165,6 +165,194 @@ DEVICE_TEMPLATES = {
                 "interval": 5
             }
         ]
+    },
+    "Whole Home AC": {
+        "type": "hvac_system",
+        "description": "Central air conditioning system",
+        "icon": "mdi-air-conditioner",
+        "sensors": [
+            {
+                "name": "Temperature",
+                "type": "temperature", 
+                "unit": "°C",
+                "min_value": 15,
+                "max_value": 35,
+                "variation_range": 0.5,
+                "change_rate": 0.2,
+                "interval": 2
+            },
+            {
+                "name": "Set Temperature",
+                "type": "set_temperature",
+                "unit": "°C",
+                "min_value": 16,
+                "max_value": 30,
+                "variation_range": 0,
+                "change_rate": 0,
+                "interval": 5
+            },
+            {
+                "name": "Mode",
+                "type": "mode",
+                "unit": "mode",
+                "min_value": 0,
+                "max_value": 4, 
+                "variation_range": 0,
+                "change_rate": 0,
+                "interval": 5
+            },
+            {
+                "name": "Fan Speed",
+                "type": "fan_speed",
+                "unit": "level",
+                "min_value": 1,
+                "max_value": 5,
+                "variation_range": 0,
+                "change_rate": 0,
+                "interval": 5
+            },
+            {
+                "name": "Power",
+                "type": "power",
+                "unit": "binary",
+                "min_value": 0,
+                "max_value": 1,
+                "variation_range": 0,
+                "change_rate": 0,
+                "interval": 1
+            }
+        ]
+    },
+    "Smart Thermostat": {
+        "type": "thermostat",
+        "description": "Smart room temperature control",
+        "icon": "mdi-thermostat",
+        "sensors": [
+            {
+                "name": "Temperature",
+                "type": "temperature",
+                "unit": "°C",
+                "min_value": 0,
+                "max_value": 40,
+                "variation_range": 1.0,
+                "change_rate": 0.5,
+                "interval": 5
+            },
+            {
+                "name": "Set Temperature",
+                "type": "set_temperature",
+                "unit": "°C",
+                "min_value": 16,
+                "max_value": 30,
+                "variation_range": 0,
+                "change_rate": 0,
+                "interval": 5
+            },
+            {
+                "name": "Humidity",
+                "type": "humidity",
+                "unit": "%",
+                "min_value": 0,
+                "max_value": 100,
+                "variation_range": 5.0,
+                "change_rate": 1.0,
+                "interval": 10
+            },
+            {
+                "name": "Mode",
+                "type": "mode",
+                "unit": "mode",
+                "min_value": 0,
+                "max_value": 3,
+                "variation_range": 0,
+                "change_rate": 0,
+                "interval": 5
+            },
+            {
+                "name": "Power",
+                "type": "power",
+                "unit": "binary",
+                "min_value": 0,
+                "max_value": 1,
+                "variation_range": 0,
+                "change_rate": 0,
+                "interval": 1
+            }
+        ]
+    },
+    "Smart Blinds": {
+        "type": "blinds",
+        "description": "Automated window blinds",
+        "icon": "mdi-blinds",
+        "sensors": [
+            {
+                "name": "Position",
+                "type": "position",
+                "unit": "%",
+                "min_value": 0,
+                "max_value": 100,
+                "variation_range": 0,
+                "change_rate": 5,
+                "interval": 2
+            },
+            {
+                "name": "Light Level",
+                "type": "light",
+                "unit": "lux",
+                "min_value": 0,
+                "max_value": 1000,
+                "variation_range": 50,
+                "change_rate": 10,
+                "interval": 5
+            },
+            {
+                "name": "Mode",
+                "type": "mode",
+                "unit": "mode",
+                "min_value": 0,
+                "max_value": 2,
+                "variation_range": 0,
+                "change_rate": 0,
+                "interval": 5
+            }
+        ]
+    },
+    "Smart Irrigation": {
+        "type": "irrigation",
+        "description": "Automated garden watering system",
+        "icon": "mdi-water-pump",
+        "sensors": [
+            {
+                "name": "Soil Moisture",
+                "type": "moisture",
+                "unit": "%",
+                "min_value": 0,
+                "max_value": 100,
+                "variation_range": 2.0,
+                "change_rate": 0.5,
+                "interval": 30
+            },
+            {
+                "name": "Water Flow",
+                "type": "flow",
+                "unit": "L/min",
+                "min_value": 0,
+                "max_value": 10,
+                "variation_range": 0.2,
+                "change_rate": 0.1,
+                "interval": 5
+            },
+            {
+                "name": "Schedule",
+                "type": "schedule",
+                "unit": "status",
+                "min_value": 0,
+                "max_value": 1,
+                "variation_range": 0,
+                "change_rate": 0,
+                "interval": 60
+            }
+        ]
     }
 }
 

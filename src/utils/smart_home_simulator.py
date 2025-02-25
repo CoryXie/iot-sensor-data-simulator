@@ -743,7 +743,15 @@ class SmartHomeSimulator:
                 'co': (0, 1),             # Binary
                 'color_temp': (2700, 6500),  # Kelvin
                 'contact_sensor': (0, 1),  # Binary
-                'status': (0, 1)          # Binary
+                'status': (0, 1),         # Binary
+                'schedule': (0, 1),       # Binary (on/off)
+                'position': (0, 100),     # Percentage
+                'flow': (0, 10),          # L/min
+                'moisture': (0, 100),     # Percentage
+                'set_temperature': (16, 30),  # Celsius (HVAC setpoint)
+                'power': (0, 1),          # Binary (on/off) 
+                'fan_speed': (1, 5),      # Fan speed levels
+                'mode': (0, 4)            # Mode settings
             }
             
             # Get base range for sensor type
@@ -765,7 +773,7 @@ class SmartHomeSimulator:
                 is_indoor = sensor.device.room.is_indoor
             
             # Handle binary sensors with stronger weather influence
-            if sensor_type in ['motion', 'door', 'window', 'smoke', 'co', 'contact_sensor', 'status']:
+            if sensor_type in ['motion', 'door', 'window', 'smoke', 'co', 'contact_sensor', 'status', 'schedule']:
                 # Get weather impact for activity level
                 weather_impact = self._calculate_weather_impact(sensor_type, self.current_weather)
                 hour = self.simulation_time.effective_time.hour
@@ -784,6 +792,17 @@ class SmartHomeSimulator:
                     prob = base_prob
                 elif sensor_type == 'status':
                     prob = base_prob * 1.5
+                elif sensor_type == 'schedule':
+                    # For schedule, we want more stable behavior
+                    # Morning and evening watering schedules for irrigation
+                    if (5 <= hour <= 8) or (17 <= hour <= 20):
+                        prob = 0.7  # High probability during typical watering times
+                    else:
+                        prob = 0.05  # Low probability during other times
+                    
+                    # Weather affects watering schedule
+                    if self.current_weather in [WeatherCondition.RAINY, WeatherCondition.HEAVY_RAIN, WeatherCondition.STORMY]:
+                        prob *= 0.2  # Much less likely to water during rain
                 else:  # door/window
                     prob = base_prob
                     if not is_indoor:
@@ -799,6 +818,108 @@ class SmartHomeSimulator:
                 
                 return 1 if random.random() < prob else 0
             
+            # Handle moisture for irrigation system
+            elif sensor_type == 'moisture':
+                # Soil moisture level (%)
+                # Get weather impact - rainy weather increases soil moisture
+                weather_impact = self._calculate_weather_impact('humidity', self.current_weather)
+                
+                # Base moisture level
+                base_moisture = 40  # Default soil moisture
+                
+                # Weather effects on soil moisture
+                if self.current_weather in [WeatherCondition.RAINY, WeatherCondition.HEAVY_RAIN, WeatherCondition.STORMY]:
+                    # Rain increases soil moisture
+                    weather_modifier = 20 * weather_impact
+                elif self.current_weather in [WeatherCondition.SUNNY, WeatherCondition.PARTLY_CLOUDY]:
+                    # Hot/sunny weather decreases soil moisture
+                    weather_modifier = -15 * (2 - weather_impact)
+                else:
+                    weather_modifier = 0
+                
+                # Calculate time-based drying effect (soil dries out over time)
+                hour = self.simulation_time.effective_time.hour
+                days_since_update = 0  # Placeholder for actual tracking
+                drying_factor = min(30, days_since_update * 3)  # Soil dries out over days
+                
+                # Apply modifiers
+                modified_value = base_moisture + weather_modifier - drying_factor
+                
+                # Add watering effect if irrigation is active
+                # Check if the flow sensor for this device is showing water flow
+                if sensor.device:
+                    for other_sensor in sensor.device.sensors:
+                        if other_sensor.type == 'flow' and other_sensor.current_value > 0:
+                            modified_value += 30  # Significant increase from watering
+                
+                # Ensure value stays within bounds
+                return max(0, min(100, modified_value))
+                
+            # Handle mode for various devices (HVAC, blinds, etc.)
+            elif sensor_type == 'mode':
+                # Mode is a discrete setting that shouldn't change on its own unless controlled by user
+                # Just return the current value, or default to 0 (usually means 'Auto' mode)
+                device_type = sensor.device.type if sensor.device else None
+                
+                # Default values for different device types
+                default_modes = {
+                    'hvac_system': 0,  # 0=Auto, 1=Cool, 2=Heat, 3=Fan, 4=Dry
+                    'thermostat': 0,   # 0=Auto, 1=Cool, 2=Heat, 3=Fan
+                    'blinds': 0,       # 0=Manual, 1=Auto, 2=Scheduled
+                    'irrigation': 0     # 0=Manual, 1=Scheduled
+                }
+                
+                # Use device-specific default or general default (0)
+                default_mode = default_modes.get(device_type, 0)
+                
+                # Return current value or default
+                return int(current if current is not None else default_mode)
+                
+            # Handle set temperature for HVAC/thermostat 
+            elif sensor_type == 'set_temperature':
+                # Set temperature is a user-controlled value that shouldn't change on its own
+                # Just return the current value or a sensible default
+                device_type = sensor.device.type if sensor.device else None
+                
+                # Default values for different device types
+                default_temps = {
+                    'hvac_system': 22.0,  # Central AC default temp
+                    'thermostat': 21.0,   # Room thermostat default
+                    'default': 22.0
+                }
+                
+                # Use device-specific default or general default
+                default_temp = default_temps.get(device_type, default_temps['default'])
+                
+                # Return current value or default
+                return current if current is not None else default_temp
+                
+            # Handle power state for devices
+            elif sensor_type == 'power':
+                # Power is a binary on/off state
+                # Just return the current value or default to off (0)
+                return 1 if current == 1 else 0
+                
+            # Handle fan speed for HVAC
+            elif sensor_type == 'fan_speed':
+                # Fan speed is a user-controlled value that shouldn't change on its own
+                # Default is medium (3 on a scale of 1-5)
+                return int(current if current is not None else 3)
+                
+            # Handle water flow rate for irrigation
+            elif sensor_type == 'flow':
+                # Water flow depends on whether irrigation is active (controlled by schedule)
+                flow_rate = 0  # Default is no flow
+                
+                # Check if the schedule is active for this device
+                if sensor.device:
+                    for other_sensor in sensor.device.sensors:
+                        if other_sensor.type == 'schedule' and other_sensor.current_value == 1:
+                            # Schedule is active, so water is flowing
+                            flow_rate = random.uniform(2.5, 4.5)  # L/min
+                
+                return flow_rate
+                
             # Handle color temperature with weather influence
             elif sensor_type == 'color_temp':
                 hour = self.simulation_time.effective_time.hour
@@ -813,6 +934,70 @@ class SmartHomeSimulator:
                 # Adjust based on weather (cloudy/stormy = warmer, sunny = cooler)
                 temp_adjustment = (1 - weather_impact) * 1000  # More pronounced weather effect
                 return max(2700, min(6500, base_temp + temp_adjustment))
+                
+            # Handle position for smart blinds
+            elif sensor_type == 'position':
+                # Position depends on mode and light level
+                position = current  # Start with current position
+                
+                # Check if there's a mode setting for this device
+                mode = 0  # Default to manual mode
+                if sensor.device:
+                    for other_sensor in sensor.device.sensors:
+                        if other_sensor.type == 'mode':
+                            mode = int(other_sensor.current_value or 0)
+                
+                # Mode 0: Manual - keep current position
+                # Mode 1: Auto (Light-based) - adjust based on light level and weather
+                # Mode 2: Scheduled - follow time-based schedule
+                
+                if mode == 1:  # Auto (Light-based)
+                    # Get weather and time info
+                    weather_impact = self._calculate_weather_impact('light', self.current_weather)
+                    hour = self.simulation_time.effective_time.hour
+                    
+                    # Determine target position based on light level
+                    # Sunny weather = more closed blinds, cloudy = more open
+                    if weather_impact > 0.7 and 9 <= hour <= 17:
+                        # Bright day - close blinds more
+                        target_position = 20  # Mostly closed (20% open)
+                    elif weather_impact < 0.3 or hour < 7 or hour > 19:
+                        # Dark conditions - open blinds
+                        target_position = 90  # Mostly open
+                    else:
+                        # Moderate conditions
+                        target_position = 50  # Half open
+                    
+                    # Move gradually toward target (max 10% change at a time for realism)
+                    if abs(position - target_position) > 10:
+                        position += 10 if target_position > position else -10
+                    else:
+                        position = target_position
+                        
+                elif mode == 2:  # Scheduled
+                    hour = self.simulation_time.effective_time.hour
+                    
+                    # Morning schedule - open blinds
+                    if 7 <= hour <= 9:
+                        target_position = 80  # Mostly open
+                    # Evening schedule - close blinds
+                    elif 19 <= hour <= 22:
+                        target_position = 10  # Mostly closed
+                    # Night schedule - closed for privacy
+                    elif 22 <= hour or hour < 6:
+                        target_position = 0  # Fully closed
+                    # Daytime schedule - partially open
+                    else:
+                        target_position = 60  # Partially open
+                    
+                    # Move gradually toward target (max 10% change at a time for realism)
+                    if abs(position - target_position) > 10:
+                        position += 10 if target_position > position else -10
+                    else:
+                        position = target_position
+                
+                # Ensure value stays within bounds
+                return max(0, min(100, position))
             
             # Handle numeric sensors with enhanced weather impact
             else:
@@ -827,6 +1012,25 @@ class SmartHomeSimulator:
                 if sensor_type == 'temperature':
                     # Get outdoor temperature from environmental state
                     outdoor_temp = self.env_state.temperature_celsius
+                    
+                    # Check if there's an active whole home AC in the system
+                    whole_home_ac = None
+                    ac_settings = {}
+                    
+                    try:
+                        with self.db() as session:
+                            # Find any whole home AC device that is active
+                            whole_home_ac = session.query(Device).filter(
+                                Device.type == 'hvac_system',
+                                Device.is_active == True
+                            ).first()
+                            
+                            if whole_home_ac:
+                                # Get AC settings from its sensors
+                                for ac_sensor in whole_home_ac.sensors:
+                                    ac_settings[ac_sensor.type] = ac_sensor.current_value
+                    except Exception as e:
+                        logger.error(f"Error checking for whole home AC: {e}")
                     
                     # Calculate realistic indoor temperature based on outdoor conditions
                     if is_indoor:
@@ -853,11 +1057,59 @@ class SmartHomeSimulator:
                         # Previous value has more weight for well-insulated rooms
                         thermal_lag_factor = insulation_factor * 0.7  # 0-0.7 scale
                         
+                        # Thermal transfer calculation - how much outdoor temperature affects indoor
+                        outdoor_influence = 1 - insulation_factor  # Better insulation = less outdoor influence
+                        
                         # Preferred indoor temperature (comfort zone)
                         preferred_temp = 22 + (time_factor * 1.5)  # 20.5°C to 23.5°C throughout the day
                         
-                        # Thermal transfer calculation - how much outdoor temperature affects indoor
-                        outdoor_influence = 1 - insulation_factor  # Better insulation = less outdoor influence
+                        # If whole home AC is active, use its set temperature as the preferred temp
+                        if whole_home_ac and ac_settings.get('power', 0) == 1:
+                            ac_set_temp = ac_settings.get('set_temperature')
+                            ac_mode = ac_settings.get('mode', 0)
+                            ac_fan_speed = ac_settings.get('fan_speed', 3)
+                            
+                            if ac_set_temp is not None:
+                                # Mode values: 0=Auto, 1=Cool, 2=Heat, 3=Fan, 4=Dry
+                                # In cooling mode (mode 1), AC works to cool the house
+                                if ac_mode == 1 and outdoor_temp > ac_set_temp:
+                                    preferred_temp = ac_set_temp
+                                    
+                                    # Fan speed affects how quickly temperature changes (1-5)
+                                    # Higher fan speed means faster temperature change
+                                    fan_factor = ac_fan_speed / 5.0
+                                    
+                                    # Increase cooling efficiency with fan speed
+                                    outdoor_influence *= max(0.3, 1 - (fan_factor * 0.5))
+                                    
+                                    # AC can overcome some thermal lag
+                                    thermal_lag_factor *= max(0.3, 1 - (fan_factor * 0.3))
+                                    
+                                # In heating mode (mode 2), AC works to heat the house
+                                elif ac_mode == 2 and outdoor_temp < ac_set_temp:
+                                    preferred_temp = ac_set_temp
+                                    
+                                    # Fan speed affects how quickly temperature changes
+                                    fan_factor = ac_fan_speed / 5.0
+                                    
+                                    # Increase heating efficiency with fan speed
+                                    outdoor_influence *= max(0.3, 1 - (fan_factor * 0.5))
+                                    
+                                    # AC can overcome some thermal lag
+                                    thermal_lag_factor *= max(0.3, 1 - (fan_factor * 0.3))
+                                    
+                                # In auto mode (mode 0), AC works to maintain set temperature
+                                elif ac_mode == 0:
+                                    preferred_temp = ac_set_temp
+                                    
+                                    # Fan speed affects how quickly temperature changes
+                                    fan_factor = ac_fan_speed / 5.0
+                                    
+                                    # Increase HVAC efficiency with fan speed
+                                    outdoor_influence *= max(0.3, 1 - (fan_factor * 0.5))
+                                    
+                                    # AC can overcome some thermal lag
+                                    thermal_lag_factor *= max(0.3, 1 - (fan_factor * 0.3))
                         
                         # Calculate new indoor temperature
                         # Formula: new_temp = (previous_temp * thermal_lag) + 
@@ -1502,8 +1754,8 @@ class SmartHomeSimulator:
         
         return sensor_data
 
-    def _simulate_sensor_thread(self, sensor: Sensor):
-        """Simulate sensor readings in a separate thread"""
+    def _simulate_sensor_thread(self, sensor):
+        """Thread function to simulate sensor data over time"""
         with SessionLocal() as session:
             while self.running and sensor.id in self.sensor_threads:
                 try:
@@ -1563,3 +1815,164 @@ class SmartHomeSimulator:
                     logger.exception("Detailed error trace:")
                     session.rollback()  # Rollback on error
                     time.sleep(self.simulation_interval)
+
+    def set_ac_parameters(self, power: bool, temperature: float, mode: int, fan_speed: int):
+        """
+        Set parameters for the whole home AC system
+        
+        Args:
+            power: True if AC is on, False if off
+            temperature: Target temperature in Celsius
+            mode: 0=Auto, 1=Cool, 2=Heat, 3=Fan, 4=Dry
+            fan_speed: Fan speed from 1-5
+        """
+        try:
+            with self.db() as session:
+                # Find the whole home AC device
+                ac_device = session.query(Device).filter(
+                    Device.type == 'hvac_system'
+                ).first()
+                
+                if not ac_device:
+                    logger.warning("No whole home AC found in the system")
+                    return False
+                
+                # Set the device to active based on power setting
+                ac_device.is_active = power
+                
+                # Update the sensor values
+                for sensor in ac_device.sensors:
+                    if sensor.type == 'power':
+                        sensor.current_value = 1 if power else 0
+                    elif sensor.type == 'set_temperature' and power:
+                        sensor.current_value = max(16, min(30, temperature))
+                    elif sensor.type == 'mode' and power:
+                        sensor.current_value = max(0, min(4, mode))
+                    elif sensor.type == 'fan_speed' and power:
+                        sensor.current_value = max(1, min(5, fan_speed))
+                
+                # Increment update counter
+                ac_device.update_counter += 1
+                
+                # Commit changes
+                session.add(ac_device)
+                session.commit()
+                
+                # Log the change
+                logger.info(f"Updated whole home AC: Power={'On' if power else 'Off'}, "
+                           f"Temp={temperature}°C, Mode={mode}, Fan={fan_speed}")
+                
+                # Emit device update event
+                asyncio.create_task(self.event_system.emit('device_update', {
+                    'device_id': ac_device.id,
+                    'name': ac_device.name,
+                    'type': 'hvac_system',
+                    'power': power,
+                    'temperature': temperature,
+                    'mode': mode,
+                    'fan_speed': fan_speed,
+                    'update_counter': ac_device.update_counter
+                }))
+                
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error setting AC parameters: {e}")
+            return False
+    
+    # Method to control smart thermostat
+    def set_thermostat(self, room_id: int, power: bool, temperature: float, mode: int):
+        """
+        Set parameters for a room thermostat
+        
+        Args:
+            room_id: ID of the room where the thermostat is located
+            power: True if thermostat is on, False if off
+            temperature: Target temperature in Celsius
+            mode: 0=Auto, 1=Cool, 2=Heat, 3=Fan
+        """
+        try:
+            with self.db() as session:
+                # Find the thermostat in the specified room
+                thermostat = session.query(Device).filter(
+                    Device.type == 'thermostat',
+                    Device.room_id == room_id
+                ).first()
+                
+                if not thermostat:
+                    logger.warning(f"No thermostat found in room {room_id}")
+                    return False
+                
+                # Set the device to active based on power setting
+                thermostat.is_active = power
+                
+                # Update the sensor values
+                for sensor in thermostat.sensors:
+                    if sensor.type == 'power':
+                        sensor.current_value = 1 if power else 0
+                    elif sensor.type == 'set_temperature' and power:
+                        sensor.current_value = max(16, min(30, temperature))
+                    elif sensor.type == 'mode' and power:
+                        sensor.current_value = max(0, min(3, mode))
+                
+                # Increment update counter
+                thermostat.update_counter += 1
+                
+                # Commit changes
+                session.add(thermostat)
+                session.commit()
+                
+                # Log the change
+                logger.info(f"Updated thermostat in room {room_id}: Power={'On' if power else 'Off'}, "
+                           f"Temp={temperature}°C, Mode={mode}")
+                
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error setting thermostat parameters: {e}")
+            return False
+            
+    # Method to control smart blinds
+    def set_blinds(self, room_id: int, position: int, mode: int):
+        """
+        Set parameters for smart blinds
+        
+        Args:
+            room_id: ID of the room where the blinds are located
+            position: Position from 0 (closed) to 100 (open)
+            mode: 0=Manual, 1=Auto (light-based), 2=Scheduled
+        """
+        try:
+            with self.db() as session:
+                # Find the blinds in the specified room
+                blinds = session.query(Device).filter(
+                    Device.type == 'blinds',
+                    Device.room_id == room_id
+                ).first()
+                
+                if not blinds:
+                    logger.warning(f"No smart blinds found in room {room_id}")
+                    return False
+                
+                # Update the sensor values
+                for sensor in blinds.sensors:
+                    if sensor.type == 'position':
+                        sensor.current_value = max(0, min(100, position))
+                    elif sensor.type == 'mode':
+                        sensor.current_value = max(0, min(2, mode))
+                
+                # Increment update counter
+                blinds.update_counter += 1
+                
+                # Commit changes
+                session.add(blinds)
+                session.commit()
+                
+                # Log the change
+                logger.info(f"Updated blinds in room {room_id}: Position={position}%, Mode={mode}")
+                
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error setting blinds parameters: {e}")
+            return False
