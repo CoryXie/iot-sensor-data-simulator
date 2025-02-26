@@ -30,6 +30,7 @@ class FloorPlan:
         self.device_elements = {}
         self.update_lock = asyncio.Lock()
         self.pending_updates = {}  # Track sensors that need UI updates
+        self.device_update_counts = {}  # Track number of updates for each device
         self._setup_event_handlers()
         
         # Start the update processing task
@@ -315,7 +316,11 @@ class FloorPlan:
                     # Device header with improved alignment
                     with ui.row().classes('w-full items-center justify-start gap-3 mb-3 pb-2 border-b border-gray-100'):
                         ui.icon('device_hub').classes('text-primary text-xl min-w-[28px]')
-                        ui.label(device_name).classes('text-lg font-semibold text-gray-800 truncate')
+                        ui.label(device_name).classes('text-lg font-semibold text-gray-800 truncate flex-grow')
+                        
+                        # Add update counter bubble
+                        update_count = self.device_update_counts.get(device_id, 0)
+                        counter_bubble = ui.badge(str(update_count)).classes('min-w-[28px] bg-primary text-white rounded-full')
                     
                     # Create sensors container with better spacing
                     sensors_container = ui.column().classes('w-full gap-2 mt-3')
@@ -359,12 +364,13 @@ class FloorPlan:
                                     
                                     logger.debug(f"Created sensor element for {sensor_name} (ID: {sensor_id})")
                     
-                    # Store elements - removing the counter but keeping the dictionary structure
+                    # Store elements - now include the counter bubble reference
                     if device_id not in self.device_elements:
                         self.device_elements[device_id] = {}
                     self.device_elements[device_id].update({
                         'container': container,
-                        'sensors': sensor_elements
+                        'sensors': sensor_elements,
+                        'counter': counter_bubble
                     })
                     
                     logger.debug(f"Added device {device_name} with {len(sensor_elements)} sensors")
@@ -495,8 +501,17 @@ class FloorPlan:
                 logger.error(f"Room {room_type} not found in room elements")
                 return
                 
-            # No need to update the counter element as it has been removed
-            logger.debug(f"Device update processed for {device_name} (ID: {device_id}, updates: {updates})")
+            # Increment update counter and update the UI
+            if device_id not in self.device_update_counts:
+                self.device_update_counts[device_id] = 0
+            self.device_update_counts[device_id] += 1
+            
+            # Update the counter badge if it exists
+            if device_id in self.device_elements and 'counter' in self.device_elements[device_id]:
+                counter_badge = self.device_elements[device_id]['counter']
+                counter_badge.text = str(self.device_update_counts[device_id])
+                
+            logger.debug(f"Device update processed for {device_name} (ID: {device_id}, updates: {self.device_update_counts[device_id]})")
                 
         except Exception as e:
             logger.error(f"Error in device update handler: {str(e)}")
@@ -585,6 +600,16 @@ class FloorPlan:
             sensor_label = sensor_elements.get(sensor_id)
             container = device_elements.get('container')
             
+            # Increment device update counter and update the UI bubble
+            if device_id not in self.device_update_counts:
+                self.device_update_counts[device_id] = 0
+            self.device_update_counts[device_id] += 1
+            
+            counter_badge = device_elements.get('counter')
+            if counter_badge:
+                counter_badge.text = str(self.device_update_counts[device_id])
+                logger.debug(f"Updated counter for device {device_id} to {self.device_update_counts[device_id]}")
+            
             if sensor_label and container:
                 try:
                     # Format the value nicely
@@ -610,7 +635,7 @@ class FloorPlan:
             # Can safely update the label text since we have the reference
             if sensor_label:
                 sensor_label.text = formatted_value
-                
+            
         except Exception as e:
             logger.error(f"Error handling sensor update: {str(e)}")
             logger.debug(f"Problematic event data: {data}")
@@ -641,6 +666,28 @@ class FloorPlan:
         except Exception as e:
             logger.error(f"Error in update processing: {str(e)}")
             self.pending_updates.clear()
+
+    def reset_update_counters(self, device_id=None):
+        """Reset update counters for all devices or a specific device"""
+        try:
+            if device_id is not None:
+                # Reset specific device counter
+                if device_id in self.device_update_counts:
+                    self.device_update_counts[device_id] = 0
+                    # Update the UI badge if it exists
+                    if device_id in self.device_elements and 'counter' in self.device_elements[device_id]:
+                        self.device_elements[device_id]['counter'].text = "0"
+                    logger.debug(f"Reset update counter for device ID: {device_id}")
+            else:
+                # Reset all device counters
+                for dev_id in self.device_update_counts.keys():
+                    self.device_update_counts[dev_id] = 0
+                    # Update the UI badge if it exists
+                    if dev_id in self.device_elements and 'counter' in self.device_elements[dev_id]:
+                        self.device_elements[dev_id]['counter'].text = "0"
+                logger.debug("Reset all device update counters")
+        except Exception as e:
+            logger.error(f"Error resetting update counters: {str(e)}")
 
     def create_floor_plan(self, container=None):
         """Generate floor plan visualization with data binding"""
