@@ -207,14 +207,21 @@ class SmartHomePage:
         
     async def handle_device_update(self, data):
         """Handle real-time device updates"""
-        device_id = data['device_id']
-        self.devices[device_id] = {
-            'name': data['name'],
-            'type': data['type'],
-            'location': data['location'],
-            'update_counter': data['update_counter']
-        }
-        await self.update_ui()
+        logger.debug(f'Handling device update with data: {data}')  # Log the incoming data
+        try:
+            # Check for the 'location' key and handle its absence
+            location = data.get('location', 'Unknown Location')  # Default value if location is missing
+            device_id = data['device_id']
+            self.devices[device_id] = {
+                'name': data['name'],
+                'type': data['type'],
+                'location': location,
+                'update_counter': data['update_counter']
+            }
+            await self.update_ui()
+        except Exception as e:
+            logger.error(f'Error handling device update: {e}')
+            ui.notify("Failed to load scenarios", type='negative')
         
     async def update_ui(self):
         """Update the UI with latest sensor and device data"""

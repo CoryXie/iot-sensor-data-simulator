@@ -2,6 +2,7 @@ from nicegui import ui
 from src.constants.units import UNITS
 from src.constants.sensor_errors import *
 from src.models.sensor import Sensor
+from loguru import logger
 
 
 class Chart:

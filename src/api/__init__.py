@@ -1,0 +1,1 @@
+"""API module for the Smart Home IoT Sensor Data Simulator.""" 

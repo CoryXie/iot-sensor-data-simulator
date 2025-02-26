@@ -2,6 +2,7 @@ from nicegui import ui
 from src.constants.units import *
 from src.components.sensor_selection import SensorSelection
 from src.components.chart import Chart
+from loguru import logger
 
 
 class LiveViewDialog():

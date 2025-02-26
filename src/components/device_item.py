@@ -4,6 +4,7 @@ from src.models.sensor import Sensor
 import pyperclip
 from src.components.live_view_dialog import LiveViewDialog
 from src.models.device import Device
+from loguru import logger
 
 class DeviceItem:
     '''Device item component for displaying a device in a list'''

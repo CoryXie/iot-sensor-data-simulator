@@ -1,6 +1,7 @@
 from nicegui import ui
 from src.constants.sensor_errors import *
 import json
+from loguru import logger
 
 
 class AnomalyCard:

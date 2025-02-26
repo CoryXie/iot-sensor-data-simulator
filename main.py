@@ -28,6 +28,9 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 from src.utils.event_system import EventSystem
 from src.utils.socketio_patch import apply_socketio_patches
+# Import the API router (no longer directly used, but kept for reference)
+from src.api.api import api_router
+from fastapi.responses import JSONResponse
 
 # Configure logging
 os.makedirs('logs', exist_ok=True)
@@ -92,6 +95,102 @@ def init():
     """Initialize the application"""
     logger.info("Initializing application")
     
+    # Set up API routes directly using ui.page
+    @ui.page('/api/devices')
+    async def get_devices():
+        """Get all devices or filter by type/room"""
+        from fastapi.responses import JSONResponse
+        from src.database import SessionLocal
+        from src.models.device import Device
+
+        try:
+            with SessionLocal() as session:
+                devices = session.query(Device).all()
+                device_list = [{"id": d.id, "name": d.name, "type": d.type, "room_id": d.room_id} for d in devices]
+                return JSONResponse(content={"devices": device_list})
+        except Exception as e:
+            logger.error(f"Error fetching devices: {str(e)}")
+            return JSONResponse(content={"error": str(e)}, status_code=500)
+    
+    @ui.page('/api/devices/{device_id}')
+    async def get_device(request):
+        """Get detailed information about a specific device"""
+        from fastapi.responses import JSONResponse
+        from src.database import SessionLocal
+        from src.models.device import Device
+        from src.models.sensor import Sensor
+
+        try:
+            device_id = int(request.path_params.get('device_id'))
+            with SessionLocal() as session:
+                device = session.query(Device).filter(Device.id == device_id).first()
+                if not device:
+                    return JSONResponse(content={"error": "Device not found"}, status_code=404)
+                
+                # Get all sensors for this device
+                sensors = session.query(Sensor).filter(Sensor.device_id == device_id).all()
+                sensor_list = [
+                    {
+                        "id": s.id, 
+                        "name": s.name, 
+                        "type": s.type, 
+                        "current_value": s.current_value, 
+                        "unit": s.unit
+                    } 
+                    for s in sensors
+                ]
+                
+                # Create detailed device info
+                device_info = {
+                    "id": device.id,
+                    "name": device.name,
+                    "type": device.type,
+                    "room_id": device.room_id,
+                    "description": device.description,
+                    "is_active": device.is_active,
+                    "sensors": sensor_list
+                }
+                
+                return JSONResponse(content=device_info)
+        except Exception as e:
+            logger.error(f"Error fetching device details: {str(e)}")
+            return JSONResponse(content={"error": str(e)}, status_code=500)
+    
+    @ui.page('/api/rooms')
+    async def get_rooms():
+        """Get all rooms"""
+        from fastapi.responses import JSONResponse
+        from src.database import SessionLocal
+        from src.models.room import Room
+        from src.models.device import Device
+
+        try:
+            with SessionLocal() as session:
+                rooms = session.query(Room).all()
+                result = []
+                
+                for room in rooms:
+                    # Get devices in this room
+                    devices = session.query(Device).filter(Device.room_id == room.id).all()
+                    device_list = [{"id": d.id, "name": d.name, "type": d.type} for d in devices]
+                    
+                    room_data = {
+                        "id": room.id,
+                        "name": room.name,
+                        "room_type": room.room_type,
+                        "is_indoor": room.is_indoor,
+                        "devices": device_list
+                    }
+                    result.append(room_data)
+                
+                return JSONResponse(content={"rooms": result})
+        except Exception as e:
+            logger.error(f"Error fetching rooms: {str(e)}")
+            return JSONResponse(content={"error": str(e)}, status_code=500)
+    
+    # More API endpoints can be added in a similar way, as needed
+    logger.info("API endpoints set up at /api/*")
+    
     # Attempt to apply Socket.IO patches but continue even if they fail
     try:
         patch_result = apply_socketio_patches()
@@ -102,7 +201,7 @@ def init():
     except Exception as e:
         logger.error(f"Error applying Socket.IO patches: {e}")
         logger.warning("Continuing without Socket.IO patches - some features may have limited functionality")
-    
+
     # Database setup
     ensure_database()
     initialize_all_data()
@@ -171,6 +270,38 @@ def init():
         with SessionLocal() as session:
             sensors = session.query(Sensor).all()
             return [f"{s.name}: {s.current_value}" for s in sensors]
+
+    # Add a page to display API documentation
+    @ui.page('/api-docs')
+    def api_docs():
+        """API Documentation page"""
+        nav = Navigation()
+        with ui.header().style('background-color: #3874c8').classes('z-50'):
+            nav.setup_navigation()
+        with ui.column().classes('w-full min-h-screen bg-gray-50 p-4'):
+            with ui.card().classes('w-full p-4'):
+                ui.label('Smart Home API Documentation').classes('text-h5 mb-4')
+                ui.label('This page provides documentation for the Smart Home RESTful API.').classes('mb-4')
+                
+                with ui.expansion('API Overview', icon='api').classes('w-full'):
+                    ui.label('The Smart Home API provides endpoints to control smart home devices:').classes('mb-2')
+                    with ui.list().classes('ml-4'):
+                        ui.label('GET /api/devices - List all devices')
+                        ui.label('GET /api/devices/{device_id} - Get details for a specific device')
+                        ui.label('GET /api/rooms - List all rooms with their devices')
+                
+                with ui.expansion('Example Usage (cURL)', icon='code').classes('w-full mt-4'):
+                    with ui.code('bash').classes('w-full'):
+                        ui.markdown('''
+# Get all devices
+curl -X GET "http://localhost:8080/api/devices"
+
+# Get a specific device with its sensors
+curl -X GET "http://localhost:8080/api/devices/20"
+
+# Get all rooms with their devices
+curl -X GET "http://localhost:8080/api/rooms"
+                        ''')
 
     logger.info("Application initialized successfully")
 

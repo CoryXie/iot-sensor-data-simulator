@@ -34,6 +34,7 @@ class Navigation():
                     ui.link('Containers', '/containers').classes('text-white !no-underline hover:text-blue-200')
                     ui.link('Devices', '/devices').classes('text-white !no-underline hover:text-blue-200')
                     ui.link('Sensors', '/sensors').classes('text-white !no-underline hover:text-blue-200')
+                    ui.link('API Docs', '/api-docs').classes('text-white !no-underline hover:text-blue-200 flex items-center')
                 
                 # Settings area
                 with ui.row().classes('flex items-center gap-4'):

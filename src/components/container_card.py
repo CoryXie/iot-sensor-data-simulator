@@ -6,6 +6,7 @@ from src.components.chart import Chart
 from src.utils.iot_hub_helper import IoTHubHelper
 from src.utils.mqtt_helper import MQTTHelper
 from src.utils.export_helper import ExportHelper
+from loguru import logger
 import asyncio
 
 

@@ -37,10 +37,9 @@ class SmartHomeSimulator:
     
     def __init__(self, event_system: EventSystem = None):
         """Initialize the simulator with event system"""
-        # Skip if already initialized
         if SmartHomeSimulator._initialized:
             return
-            
+        
         logger.info("Initializing SmartHomeSimulator")
         self.event_system = event_system or EventSystem()
         self.active_scenario = None
@@ -174,23 +173,19 @@ class SmartHomeSimulator:
         
         SmartHomeSimulator._initialized = True
     
-    def is_running(self):
-        """Check if simulation is running"""
-        return self.running
-    
     def set_scenario(self, scenario_name: str):
         """Set the current scenario for simulation"""
         logger.info(f"Setting scenario to: {scenario_name}")
         self.active_scenario = scenario_name
         self.scenario_start_time = datetime.now()
         self.base_values = {}
-        
+    
     def adjust_sensor_value(self, base_value: float, sensor_type: int) -> float:
         """Adjust a sensor value based on the current scenario and time"""
         if sensor_type not in self.base_values:
             self.base_values[sensor_type] = base_value
             logger.debug(f"Initialized base value for sensor type {sensor_type}: {base_value}")
-            
+        
         # Get time-based variation
         time_variation = self._get_time_variation(sensor_type)
         
@@ -1473,7 +1468,7 @@ class SmartHomeSimulator:
                                 new_value = self._generate_sensor_value(sensor)
                                 
                                 # Only update if value has changed significantly
-                                if sensor.current_value is None or abs(new_value - sensor.current_value) > 0.01:
+                                if sensor.current_value is None or abs(new_value - sensor.current_value) >= 0.01:
                                     old_value = sensor.current_value
                                     sensor.current_value = new_value
                                     session.add(sensor)
@@ -1502,7 +1497,7 @@ class SmartHomeSimulator:
                                         # Create MQTT topic with the new structure
                                         topic = f"smart_home/{location}/{device_category}/{sensor.type.lower()}"
                                         self.publish_sensor_data(topic, sensor_data)
-                                        
+                                        logger.debug(f"Published sensor data to topic: {topic} - {sensor_data}")
                                         # Emit event for UI update
                                         await self.event_system.emit('sensor_update', {
                                             'sensor_id': sensor.id,
@@ -1519,7 +1514,7 @@ class SmartHomeSimulator:
                             if device_updated:
                                 device.update_counter += 1
                                 session.add(device)
-                                
+                                logger.debug(f"Device updated: {device.name} - {device.update_counter}")
                                 # Emit device update event for UI
                                 await self.event_system.emit('device_update', {
                                     'device_id': device.id,

@@ -1,4 +1,5 @@
 from nicegui import ui
+from loguru import logger
 
 class LogsDialog():
     '''This class represents the logs dialog. It is used to display the logs of an active container.'''

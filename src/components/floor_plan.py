@@ -1,5 +1,5 @@
 import json
-from src.utils.logger import logger
+from loguru import logger
 from nicegui import ui
 from src.database import SessionLocal
 from src.models.room import Room
@@ -14,6 +14,7 @@ import random
 from datetime import datetime
 import threading
 import time
+from src.utils.smart_home_simulator import SmartHomeSimulator
 
 class FloorPlan:
     def __init__(self, event_system: EventSystem = None):
@@ -30,11 +31,12 @@ class FloorPlan:
         self.device_elements = {}
         self.update_lock = asyncio.Lock()
         self.pending_updates = {}  # Track sensors that need UI updates
-        self.device_update_counts = {}  # Track number of updates for each device
+        self.device_control_dialogs = {}  # Store device control dialogs
+        self.simulator = SmartHomeSimulator.get_instance(self.event_system)  # Get simulator instance
         self._setup_event_handlers()
         
         # Start the update processing task
-        ui.timer(0.1, self._process_updates, active=True)
+        ui.timer(0.5, self._process_updates, active=True)
 
     def _normalize_room_type(self, room_type: str) -> str:
         """Normalize room type for consistent comparison"""
@@ -304,6 +306,7 @@ class FloorPlan:
         try:
             device_id = device_data.get('id')
             device_name = device_data.get('name', '')
+            device_type = device_data.get('type', '')
             container = room_card.get('container')
             
             if not container:
@@ -319,8 +322,39 @@ class FloorPlan:
                         ui.label(device_name).classes('text-lg font-semibold text-gray-800 truncate flex-grow')
                         
                         # Add update counter bubble
-                        update_count = self.device_update_counts.get(device_id, 0)
-                        counter_bubble = ui.badge(str(update_count)).classes('min-w-[28px] bg-primary text-white rounded-full')
+                        counter_bubble = ui.badge('0').classes('min-w-[28px] bg-primary text-white rounded-full')
+                        
+                        # Add control button if this is a controllable device type
+                        if device_type in ['hvac_system', 'thermostat', 'blinds', 'irrigation', 'ac', 'ac_system'] or 'Whole Home AC' in device_name:
+                            # Create a container for the control button to add the pulse animation
+                            with ui.element('div').classes('relative'):
+                                # Make the control button more visible and descriptive
+                                control_button = ui.button(
+                                    'Control', 
+                                    icon='settings',
+                                    on_click=lambda d_id=device_id: self._show_device_controls(d_id)
+                                ).props('no-caps').classes('bg-blue-500 text-white hover:bg-blue-600 z-10')
+                                
+                                # Add CSS keyframe animation for the pulse effect
+                                ui.add_head_html("""
+                                <style>
+                                @keyframes pulse-animation {
+                                    0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
+                                    70% { box-shadow: 0 0 0 10px rgba(59, 130, 246, 0); }
+                                    100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); }
+                                }
+                                .pulse {
+                                    animation: pulse-animation 2s infinite;
+                                }
+                                </style>
+                                """)
+                                
+                                # Apply the pulse class to the button
+                                control_button.classes('pulse')
+                                
+                                # Add tooltip to explain functionality
+                                with control_button:
+                                    ui.tooltip(f'Configure {device_name} settings')
                     
                     # Create sensors container with better spacing
                     sensors_container = ui.column().classes('w-full gap-2 mt-3')
@@ -370,7 +404,9 @@ class FloorPlan:
                     self.device_elements[device_id].update({
                         'container': container,
                         'sensors': sensor_elements,
-                        'counter': counter_bubble
+                        'counter': counter_bubble,
+                        'name': device_name,
+                        'type': device_type
                     })
                     
                     logger.debug(f"Added device {device_name} with {len(sensor_elements)} sensors")
@@ -477,11 +513,10 @@ class FloorPlan:
     async def _handle_device_update(self, data):
         """Handle device update events using data binding"""
         try:
+            logger.debug(f"Handling device update: {data}")
             device_id = data.get('device_id')
             device_name = data.get('device_name', '')
-            updates = data.get('device_updates', 0)
-            
-            logger.debug(f"Handling device update for {device_name} (ID: {device_id})")
+            updates = data.get('update_counter', 0)
             
             # Get room type from our mapping or database
             room_type = self.device_room_map.get(device_id)
@@ -501,17 +536,10 @@ class FloorPlan:
                 logger.error(f"Room {room_type} not found in room elements")
                 return
                 
-            # Increment update counter and update the UI
-            if device_id not in self.device_update_counts:
-                self.device_update_counts[device_id] = 0
-            self.device_update_counts[device_id] += 1
-            
-            # Update the counter badge if it exists
+            # Update the counter badge with the value from the simulator
             if device_id in self.device_elements and 'counter' in self.device_elements[device_id]:
                 counter_badge = self.device_elements[device_id]['counter']
-                counter_badge.text = str(self.device_update_counts[device_id])
-                
-            logger.debug(f"Device update processed for {device_name} (ID: {device_id}, updates: {self.device_update_counts[device_id]})")
+                counter_badge.text = str(updates)
                 
         except Exception as e:
             logger.error(f"Error in device update handler: {str(e)}")
@@ -580,13 +608,13 @@ class FloorPlan:
     async def _handle_sensor_update(self, data):
         """Handle sensor update events using data binding"""
         try:
+            logger.debug(f"Handling sensor update: {data}")
             # Extract sensor data - handle both direct sensor updates and device updates
             sensor_id = data.get('sensor_id')  # From device update
             if not sensor_id:
                 sensor_id = data.get('id')  # From direct sensor update
                 
             device_id = data.get('device_id')
-            sensor_name = data.get('sensor_name', '') or data.get('name', '')
             new_value = data.get('value')
             unit = data.get('unit', '')
             
@@ -600,47 +628,26 @@ class FloorPlan:
             sensor_label = sensor_elements.get(sensor_id)
             container = device_elements.get('container')
             
-            # Increment device update counter and update the UI bubble
-            if device_id not in self.device_update_counts:
-                self.device_update_counts[device_id] = 0
-            self.device_update_counts[device_id] += 1
-            
-            counter_badge = device_elements.get('counter')
-            if counter_badge:
-                counter_badge.text = str(self.device_update_counts[device_id])
-                logger.debug(f"Updated counter for device {device_id} to {self.device_update_counts[device_id]}")
-            
             if sensor_label and container:
                 try:
                     # Format the value nicely
                     formatted_value = f"{new_value:.2f}" if isinstance(new_value, (int, float)) else str(new_value)
                     formatted_value = f"{formatted_value} {unit}".strip()
                     
-                    # Store the update data
-                    self.pending_updates[sensor_id] = {
-                        'label': sensor_label,
-                        'container': container,
-                        'value': formatted_value,
-                        'unit': unit
-                    }
-                    
+                    # Update the label text directly
+                    sensor_label.text = formatted_value
                 except Exception as e:
-                    logger.error(f"Error queueing sensor update: {str(e)}")
+                    logger.error(f"Error updating sensor label: {str(e)}")
             else:
                 if not sensor_label:
                     logger.debug(f"No UI element found for sensor {sensor_id} in device {device_id}")
                 if not container:
                     logger.debug(f"No container found for device {device_id}")
-                
-            # Can safely update the label text since we have the reference
-            if sensor_label:
-                sensor_label.text = formatted_value
-            
         except Exception as e:
             logger.error(f"Error handling sensor update: {str(e)}")
             logger.debug(f"Problematic event data: {data}")
 
-    def _process_updates(self):
+    async def _process_updates(self):
         """Process all pending sensor updates"""
         try:
             if not self.pending_updates:
@@ -650,7 +657,7 @@ class FloorPlan:
             updates = [f"{sid}:{data['value']}{data['unit']}" for sid, data in self.pending_updates.items()]
             if updates:
                 logger.debug(f"Batch updates: {', '.join(updates)}")
-            
+                
             # Process each update
             for sensor_id, update_data in self.pending_updates.items():
                 try:
@@ -659,10 +666,9 @@ class FloorPlan:
                     label.text = text
                 except Exception as e:
                     logger.error(f"Error updating sensor {sensor_id}: {str(e)}")
-            
+                    
             # Clear pending updates after processing
             self.pending_updates.clear()
-            
         except Exception as e:
             logger.error(f"Error in update processing: {str(e)}")
             self.pending_updates.clear()
@@ -672,17 +678,12 @@ class FloorPlan:
         try:
             if device_id is not None:
                 # Reset specific device counter
-                if device_id in self.device_update_counts:
-                    self.device_update_counts[device_id] = 0
-                    # Update the UI badge if it exists
-                    if device_id in self.device_elements and 'counter' in self.device_elements[device_id]:
-                        self.device_elements[device_id]['counter'].text = "0"
+                if device_id in self.device_elements and 'counter' in self.device_elements[device_id]:
+                    self.device_elements[device_id]['counter'].text = "0"
                     logger.debug(f"Reset update counter for device ID: {device_id}")
             else:
                 # Reset all device counters
-                for dev_id in self.device_update_counts.keys():
-                    self.device_update_counts[dev_id] = 0
-                    # Update the UI badge if it exists
+                for dev_id in self.device_elements.keys():
                     if dev_id in self.device_elements and 'counter' in self.device_elements[dev_id]:
                         self.device_elements[dev_id]['counter'].text = "0"
                 logger.debug("Reset all device update counters")
@@ -708,3 +709,485 @@ class FloorPlan:
         except Exception as e:
             logger.error(f"Error creating floor plan: {e}")
             raise
+
+    async def _show_device_controls(self, device_id):
+        """Show controls for the selected device"""
+        try:
+            if device_id not in self.device_elements:
+                logger.error(f"Device {device_id} not found in device elements")
+                ui.notify(f"Device with ID {device_id} not found", color='negative')
+                return
+                
+            device_data = self.device_elements[device_id]
+            device_name = device_data.get('name', 'Unknown Device')
+            device_type = device_data.get('type', '')
+            
+            # Check if dialog already exists
+            if hasattr(self, 'device_control_dialogs') and device_id in self.device_control_dialogs and self.device_control_dialogs[device_id].value:
+                # Dialog already open, bring to front
+                return
+                
+            # Initialize device_control_dialogs if it doesn't exist
+            if not hasattr(self, 'device_control_dialogs'):
+                self.device_control_dialogs = {}
+                
+            # Create control dialog
+            with ui.dialog() as dialog:
+                self.device_control_dialogs[device_id] = dialog
+                
+                with ui.card().classes('p-4 w-96'):
+                    ui.label(f'Control {device_name}').classes('text-xl font-bold mb-4')
+                    
+                    # Different controls based on device type
+                    if device_type in ['hvac_system', 'ac', 'ac_system'] or 'Whole Home AC' in device_name:
+                        await self._create_ac_controls(device_id, dialog)
+                    elif device_type == 'thermostat':
+                        self._create_thermostat_controls(device_id, dialog)
+                    elif device_type == 'blinds':
+                        self._create_blinds_controls(device_id, dialog)
+                    elif device_type == 'irrigation':
+                        self._create_irrigation_controls(device_id, dialog)
+                    else:
+                        ui.label('No controls available for this device type').classes('text-gray-500')
+                        
+                    # Add close button at the bottom
+                    with ui.row().classes('w-full justify-end mt-4'):
+                        ui.button('Close', icon='close', on_click=dialog.close).props('flat')
+            
+            # Ensure the dialog is opened
+            dialog.open()
+            ui.notify(f"Opening controls for {device_name}", color='info')
+            
+        except Exception as e:
+            logger.error(f"Error showing device controls: {str(e)}")
+            ui.notify(f"Error showing device controls: {str(e)}", color='negative')
+    
+    async def _create_ac_controls(self, device_id, dialog):
+        """Create controls for whole home AC"""
+        try:
+            # Get current values from sensors
+            with SessionLocal() as session:
+                device = session.query(Device).filter(Device.id == device_id).options(
+                    joinedload(Device.sensors)
+                ).first()
+                
+                if not device:
+                    ui.label('Device not found').classes('text-red-500')
+                    return
+                
+                # Find current values
+                power_value = False
+                temp_value = 22
+                mode_value = 0
+                fan_value = 3
+                
+                logger.debug(f"Device found: {device.name}")
+                for sensor in device.sensors:
+                    logger.debug(f"Sensor found: {sensor.name} (Type: {sensor.type})")
+                    if sensor.type == 'power':
+                        power_value = sensor.current_value == 1
+                    elif sensor.type == 'set_temperature':
+                        temp_value = float(sensor.current_value or 22)
+                    elif sensor.type == 'mode':
+                        mode_value = int(sensor.current_value or 0)
+                    elif sensor.type == 'fan_speed':
+                        fan_value = int(sensor.current_value or 3)
+
+                logger.debug(f"Current values - Power: {power_value}, Temperature: {temp_value}, Mode: {mode_value}, Fan Speed: {fan_value}")
+            
+            # Power switch
+            power_switch = ui.switch('Power', value=power_value).classes('mb-4')
+            
+            # Temperature slider
+            temp_slider = ui.slider(min=16, max=30, step=0.5, value=temp_value).classes('mb-2')
+            temp_label = ui.label(f'Temperature: {temp_value}°C').classes('text-sm mb-4')
+            
+            # Define options for AC mode and fan speed
+            mode_options = ['Cool', 'Heat', 'Fan', 'Dry']
+            fan_speed_options = ['Low', 'Medium', 'High']
+
+            # Create AC mode selection dropdown
+            try:
+                self.mode_select = ui.select(
+                    options=mode_options,
+                    label='Select AC Mode'
+                ).props('outlined options-dense')
+                self.mode_select.classes('min-w-[200px]')
+                self.mode_select.on('update:model-value', self._handle_mode_select_change)
+            except Exception as e:
+                logger.error(f'Error creating mode select: {e}')
+                ui.notify('Error creating mode select', type='negative')
+            
+            # Fan speed
+            fan_speed_options = ['Low', 'Medium', 'High']
+            try:
+                self.fan_speed_select = ui.select(
+                    options=fan_speed_options,
+                    label='Select Fan Speed'
+                ).props('outlined options-dense')
+                self.fan_speed_select.classes('min-w-[200px]')
+                self.fan_speed_select.on('update:model-value', self._handle_fan_speed_select_change)
+            except Exception as e:
+                logger.error(f'Error creating fan speed select: {e}')
+                ui.notify('Error creating fan speed select', type='negative')
+            
+            # Update temperature label when slider changes
+            def update_temp_label(e):
+                try:
+                    temp_value = float(e.args)  # Directly use e.args as it contains the temperature value
+                    temp_label.text = f'Temperature: {temp_value:.1f}°C'  # Update the label with the correct value
+                except (ValueError, TypeError) as error:
+                    logger.error(f'Error updating temperature label: {error}')
+                    temp_label.text = 'Temperature: Error'  # Fallback text in case of error
+            
+            temp_slider.on('update:model-value', update_temp_label)
+            
+            # Apply button
+            apply_button = ui.button('Apply Settings', icon='save').classes('mt-2')
+            status_label = ui.label('').classes('text-sm mt-2')
+            
+            # Apply settings function
+            def apply_settings():
+                status_label.text = 'Applying settings...'
+                status_label.classes('text-blue-500')
+                
+                try:
+                    temp = float(temp_slider.value)
+                    mode = self.mode_select.value
+                    fan = self.fan_speed_select.value
+                    
+                    logger.info(f"Applying AC settings - Power: {power_switch.value}, Temp: {temp}, Mode: {mode}, Fan: {fan}")
+                    
+                    success = self.simulator.set_ac_parameters(
+                        power=power_switch.value,
+                        temperature=temp,
+                        mode=mode,
+                        fan_speed=fan
+                    )
+                    
+                    if success:
+                        status_label.text = 'Settings applied successfully!'
+                        status_label.classes('text-green-500')
+                        ui.notify('AC settings updated successfully', color='positive')
+                        # Close dialog after short delay
+                        ui.timer(1.5, dialog.close, once=True)
+                    else:
+                        status_label.text = 'Failed to apply settings!'
+                        status_label.classes('text-red-500')
+                        ui.notify('Failed to update AC settings', color='negative')
+                except AttributeError as e:
+                    logger.error(f"Error applying AC settings: {e}")
+                    status_label.text = f'Error: {str(e)}'
+                    status_label.classes('text-red-500')
+                    ui.notify(f'Error: {str(e)}', color='negative')
+                except Exception as e:
+                    logger.error(f"Unexpected error applying AC settings: {e}")
+                    status_label.text = f'Error: {str(e)}'
+                    status_label.classes('text-red-500')
+                    ui.notify(f'Error: {str(e)}', color='negative')
+            
+            apply_button.on('click', apply_settings)
+        except Exception as e:
+            logger.error(f"Error creating AC controls: {e}")
+            ui.label(f'Error creating controls: {str(e)}').classes('text-red-500')
+    
+    def _create_thermostat_controls(self, device_id, dialog):
+        """Create controls for room thermostat"""
+        try:
+            # Get current values from sensors
+            with SessionLocal() as session:
+                device = session.query(Device).filter(Device.id == device_id).options(
+                    joinedload(Device.sensors)
+                ).first()
+                
+                if not device:
+                    ui.label('Device not found').classes('text-red-500')
+                    return
+                
+                # Find current values
+                power_value = False
+                temp_value = 22
+                mode_value = 0
+                room_id = device.room_id
+                
+                for sensor in device.sensors:
+                    if sensor.type == 'power':
+                        power_value = sensor.current_value == 1
+                    elif sensor.type == 'set_temperature':
+                        temp_value = sensor.current_value or 22
+                    elif sensor.type == 'mode':
+                        mode_value = int(sensor.current_value or 0)
+            
+            # Power switch
+            power_switch = ui.switch('Power', value=power_value).classes('mb-4')
+            
+            # Temperature slider
+            temp_slider = ui.slider(min=16, max=30, step=0.5, value=temp_value).classes('mb-2')
+            temp_label = ui.label(f'Temperature: {temp_value}°C').classes('text-sm mb-4')
+            
+            # Mode selection
+            mode_options = [
+                {'label': 'Auto', 'value': 0},
+                {'label': 'Cool', 'value': 1},
+                {'label': 'Heat', 'value': 2},
+                {'label': 'Fan', 'value': 3},
+                {'label': 'Dry', 'value': 4},
+            ]
+            try:
+                mode_select = ui.select(
+                    options=mode_options, 
+                    label='Mode',
+                    value=mode_value
+                ).classes('mb-4')
+            except Exception as e:
+                logger.error(f"Error creating mode_select: {e}")
+                ui.label(f'Error creating mode select: {str(e)}').classes('text-red-500')
+            
+            # Update temperature label when slider changes
+            def update_temp_label(e):
+                logger.debug(f'Event arguments: {e}')  # Log the entire event object
+                try:
+                    temp_value = float(e.args)  # Directly use e.args as it contains the temperature value
+                    temp_label.text = f'Temperature: {temp_value:.1f}°C'  # Update the label with the correct value
+                except (ValueError, TypeError) as error:
+                    logger.error(f'Error updating temperature label: {error}')
+                    temp_label.text = 'Temperature: Error'  # Fallback text in case of error
+            
+            temp_slider.on('update:model-value', update_temp_label)
+            
+            # Apply button
+            apply_button = ui.button('Apply Settings', icon='save').classes('mt-2')
+            status_label = ui.label('').classes('text-sm mt-2')
+            
+            # Apply settings function
+            def apply_settings():
+                status_label.text = 'Applying settings...'
+                status_label.classes('text-blue-500')
+                
+                try:
+                    success = self.simulator.set_thermostat(
+                        room_id=room_id,
+                        power=power_switch.value,
+                        temperature=temp_slider.value,
+                        mode=mode_select.value
+                    )
+                    
+                    if success:
+                        status_label.text = 'Settings applied successfully!'
+                        status_label.classes('text-green-500')
+                        # Close dialog after short delay
+                        ui.timer(1.5, dialog.close, once=True)
+                    else:
+                        status_label.text = 'Failed to apply settings!'
+                        status_label.classes('text-red-500')
+                except Exception as e:
+                    logger.error(f"Error applying thermostat settings: {e}")
+                    status_label.text = f'Error: {str(e)}'
+                    status_label.classes('text-red-500')
+            
+            apply_button.on('click', apply_settings)
+        except Exception as e:
+            logger.error(f"Error creating thermostat controls: {e}")
+            ui.label(f'Error creating controls: {str(e)}').classes('text-red-500')
+    
+    def _create_blinds_controls(self, device_id, dialog):
+        """Create controls for smart blinds"""
+        try:
+            # Get current values from sensors
+            with SessionLocal() as session:
+                device = session.query(Device).filter(Device.id == device_id).options(
+                    joinedload(Device.sensors)
+                ).first()
+                
+                if not device:
+                    ui.label('Device not found').classes('text-red-500')
+                    return
+                
+                # Find current values
+                position_value = 50
+                mode_value = 0
+                room_id = device.room_id
+                
+                for sensor in device.sensors:
+                    if sensor.type == 'position':
+                        position_value = sensor.current_value or 50
+                    elif sensor.type == 'mode':
+                        mode_value = int(sensor.current_value or 0)
+            
+            # Position slider
+            position_slider = ui.slider(min=0, max=100, step=1, value=position_value).classes('mb-2')
+            position_label = ui.label(f'Position: {position_value}%').classes('text-sm mb-4')
+            
+            # Mode selection
+            mode_options = [
+                {'label': 'Manual', 'value': 'manual'},
+                {'label': 'Auto (Light-based)', 'value': 'auto_light'},
+                {'label': 'Scheduled', 'value': 'scheduled'},
+            ]
+            mode_select = ui.select(
+                options=mode_options, 
+                label='Mode',
+                value=mode_value
+            ).classes('mb-4')
+            
+            # Update position label when slider changes
+            def update_position_label(e):
+                position_label.text = f'Position: {e}%'
+            
+            position_slider.on('update:model-value', update_position_label)
+            
+            # Apply button
+            apply_button = ui.button('Apply Settings', icon='save').classes('mt-2')
+            status_label = ui.label('').classes('text-sm mt-2')
+            
+            # Apply settings function
+            def apply_settings():
+                status_label.text = 'Applying settings...'
+                status_label.classes('text-blue-500')
+                
+                try:
+                    success = self.simulator.set_blinds(
+                        room_id=room_id,
+                        position=position_slider.value,
+                        mode=mode_select.value
+                    )
+                    
+                    if success:
+                        status_label.text = 'Settings applied successfully!'
+                        status_label.classes('text-green-500')
+                        # Close dialog after short delay
+                        ui.timer(1.5, dialog.close, once=True)
+                    else:
+                        status_label.text = 'Failed to apply settings!'
+                        status_label.classes('text-red-500')
+                except Exception as e:
+                    logger.error(f"Error applying blinds settings: {e}")
+                    status_label.text = f'Error: {str(e)}'
+                    status_label.classes('text-red-500')
+            
+            apply_button.on('click', apply_settings)
+        except Exception as e:
+            logger.error(f"Error creating blinds controls: {e}")
+            ui.label(f'Error creating controls: {str(e)}').classes('text-red-500')
+    
+    def _create_irrigation_controls(self, device_id, dialog):
+        """Create controls for smart irrigation system"""
+        try:
+            # Get current values from sensors
+            with SessionLocal() as session:
+                device = session.query(Device).filter(Device.id == device_id).options(
+                    joinedload(Device.sensors)
+                ).first()
+                
+                if not device:
+                    ui.label('Device not found').classes('text-red-500')
+                    return
+                
+                # Find current values
+                moisture_value = 0
+                flow_value = 0
+                schedule_value = 0
+                
+                for sensor in device.sensors:
+                    if sensor.type == 'moisture':
+                        moisture_value = sensor.current_value or 0
+                    elif sensor.type == 'flow':
+                        flow_value = sensor.current_value or 0
+                    elif sensor.type == 'schedule':
+                        schedule_value = sensor.current_value or 0
+            
+            # Display current readings
+            ui.label(f'Current Soil Moisture: {moisture_value}%').classes('text-sm mb-2')
+            ui.label(f'Current Water Flow: {flow_value} L/min').classes('text-sm mb-4')
+            
+            # Schedule toggle
+            schedule_switch = ui.switch('Automatic Watering Schedule', value=schedule_value==1).classes('mb-4')
+            
+            # Water now button
+            water_button = ui.button('Water Now (5 minutes)', icon='water_drop').classes('mb-2')
+            
+            # Apply button
+            apply_button = ui.button('Save Schedule Setting', icon='save').classes('mt-2')
+            status_label = ui.label('').classes('text-sm mt-2')
+            
+            # Apply settings function
+            def apply_settings():
+                status_label.text = 'Applying settings...'
+                status_label.classes('text-blue-500')
+                
+                try:
+                    # Update schedule sensor
+                    with SessionLocal() as session:
+                        schedule_sensor = session.query(Sensor).filter(
+                            Sensor.device_id == device_id,
+                            Sensor.type == 'schedule'
+                        ).first()
+                        
+                        if schedule_sensor:
+                            schedule_sensor.current_value = 1 if schedule_switch.value else 0
+                            session.commit()
+                            
+                            status_label.text = 'Settings applied successfully!'
+                            status_label.classes('text-green-500')
+                            # Close dialog after short delay
+                            ui.timer(1.5, dialog.close, once=True)
+                        else:
+                            status_label.text = 'Schedule sensor not found!'
+                            status_label.classes('text-red-500')
+                except Exception as e:
+                    logger.error(f"Error applying irrigation settings: {e}")
+                    status_label.text = f'Error: {str(e)}'
+                    status_label.classes('text-red-500')
+            
+            # Water now function
+            def water_now():
+                status_label.text = 'Starting irrigation...'
+                status_label.classes('text-blue-500')
+                
+                try:
+                    # Update flow sensor to simulate watering
+                    with SessionLocal() as session:
+                        flow_sensor = session.query(Sensor).filter(
+                            Sensor.device_id == device_id,
+                            Sensor.type == 'flow'
+                        ).first()
+                        
+                        if flow_sensor:
+                            flow_sensor.current_value = 5.0  # 5 L/min flow rate
+                            session.commit()
+                            
+                            # Trigger sensor update event
+                            asyncio.create_task(self.event_system.emit('sensor_update', {
+                                'id': flow_sensor.id,
+                                'device_id': device_id,
+                                'name': flow_sensor.name,
+                                'value': flow_sensor.current_value,
+                                'unit': flow_sensor.unit
+                            }))
+                            
+                            status_label.text = 'Irrigation started for 5 minutes'
+                            status_label.classes('text-green-500')
+                            
+                            # Schedule stop after 5 minutes (just for UI feedback)
+                            ui.timer(5, lambda: status_label.set_text('Irrigation completed'), once=True)
+                        else:
+                            status_label.text = 'Flow sensor not found!'
+                            status_label.classes('text-red-500')
+                except Exception as e:
+                    logger.error(f"Error starting irrigation: {e}")
+                    status_label.text = f'Error: {str(e)}'
+                    status_label.classes('text-red-500')
+            
+            apply_button.on('click', apply_settings)
+            water_button.on('click', water_now)
+        except Exception as e:
+            logger.error(f"Error creating irrigation controls: {e}")
+            ui.label(f'Error creating controls: {str(e)}').classes('text-red-500')
+
+    def _handle_mode_select_change(self, e):
+        # Placeholder for handling mode selection change
+        logger.debug(f'Mode changed to: {e}')
+
+    def _handle_fan_speed_select_change(self, e):
+        # Placeholder for handling fan speed selection change
+        logger.debug(f'Fan speed changed to: {e}')
