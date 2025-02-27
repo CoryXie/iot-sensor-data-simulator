@@ -1024,6 +1024,24 @@ class SmartHomeSimulator:
             # Calculate base value as the midpoint of the range
             base_value = (base_min + base_max) / 2
 
+            # Calculate temperature using Newton's Law of Cooling
+            indoor_temp = base_value  # Current indoor temperature
+            U = 0.1  # Overall heat loss coefficient (example value)
+            C = 1.0  # Thermal capacitance (example value)
+            P_hvac = 0  # HVAC power (can be adjusted based on AC state)
+            dt = 1  # Time step in minutes
+            dT_dt = -U / C * (indoor_temp - outdoor_temp) + P_hvac / C
+            new_temp = indoor_temp + dT_dt * dt
+            base_value = new_temp
+
+            # Calculate humidity using a mass-balance approach
+            indoor_humidity = base_value  # Current indoor humidity
+            ventilation_rate = 0.1  # Example ventilation rate
+            internal_sources = 0.5  # Example internal moisture sources (e.g., occupants)
+            dH_dt = ventilation_rate * (outdoor_humidity - indoor_humidity) + internal_sources
+            new_humidity = indoor_humidity + dH_dt * dt
+            base_value = new_humidity
+
             # Calculate weather impact
             weather_impact = self._calculate_weather_impact(sensor_type, self.env_state.weather_condition)
 
@@ -1034,18 +1052,10 @@ class SmartHomeSimulator:
             # Apply weather impact modifier
             weather_modifier = (weather_impact - 1.0) * 0.2 * (base_max - base_min)
 
-            # Access outdoor conditions
-            outdoor_temp = self.env_state.temperature_celsius  # Access temperature from EnvironmentalState
-            outdoor_humidity = self.env_state.humidity_percent  # Access humidity from EnvironmentalState
-
-            # Adjust base value based on outdoor conditions
-            base_value += (outdoor_temp - base_value) * 0.1  # Influence of outdoor temperature
-            base_value += (outdoor_humidity - 50) * 0.05  # Influence of outdoor humidity (assuming 50% is neutral)
-
             # Combine base value with modifiers
             modified_value = base_value + weather_modifier + time_modifier
 
-            # Ensure value stays within the defined range
+            # Ensure values stay within the defined range
             modified_value = max(base_min, min(base_max, modified_value))
 
             # Add small random variation (±5%)
