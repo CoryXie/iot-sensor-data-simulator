@@ -980,7 +980,7 @@ class SmartHomePage:
             # Get current weather data with error handling
             weather_data = None
             try:
-                weather_data = await self.weather_service.get_current_weather(
+                weather_data = await self.weather_service.get_weather(
                     LocationQuery(
                         type=LocationType.LATLON,
                         value=f"{self.current_location.latitude},{self.current_location.longitude}"

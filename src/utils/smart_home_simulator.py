@@ -171,6 +171,8 @@ class SmartHomeSimulator:
             }
         }
         
+        self.preferred_temperature = 20.0  # Default preferred temperature
+        
         SmartHomeSimulator._initialized = True
     
     def set_scenario(self, scenario_name: str):
@@ -435,15 +437,15 @@ class SmartHomeSimulator:
 
             # Get current time and weather
             current_time = datetime.now()
-            weather = self.env_state.weather_condition
-            outdoor_temp = weather.temperature  # Assuming weather has a temperature attribute
+            outdoor_temp = self.env_state.temperature_celsius  # Access temperature from EnvironmentalState
+            outdoor_humidity = self.env_state.humidity_percent  # Access humidity from EnvironmentalState
 
             # Calculate time of day factor (0-1)
             hour = current_time.hour
             time_factor = self._calculate_time_factor(hour)
 
             # Calculate weather impact
-            weather_impact = self._calculate_weather_impact(sensor.type, weather)
+            weather_impact = self._calculate_weather_impact(sensor.type, self.env_state.weather_condition)
 
             # Calculate room-specific adjustments
             room_factor = self._calculate_room_factor(room_type, sensor.type)
@@ -470,9 +472,9 @@ class SmartHomeSimulator:
 
             # Introduce a more dynamic variation based on time and weather
             variation = random.uniform(-sensor.variation_range, sensor.variation_range)
-            if weather.humidity > 70:  # Example condition for high humidity
+            if self.env_state.weather_condition.humidity > 70:  # Example condition for high humidity
                 variation *= 0.8  # Reduce variation in high humidity
-            elif weather.humidity < 30:  # Example condition for low humidity
+            elif self.env_state.weather_condition.humidity < 30:  # Example condition for low humidity
                 variation *= 1.2  # Increase variation in low humidity
 
             # Combine all factors
@@ -480,6 +482,27 @@ class SmartHomeSimulator:
 
             # Ensure value is within sensor's defined range
             value = max(sensor.min_value, min(sensor.max_value, value))
+
+            # Calculate temperature using Newton's Law of Cooling
+            if sensor.type == 'temperature':
+                indoor_temp = value  # Current indoor temperature
+                U = 0.1  # Overall heat loss coefficient (example value)
+                C = 1.0  # Thermal capacitance (example value)
+                P_hvac = 0  # HVAC power (can be adjusted based on AC state)
+                dt = 1  # Time step in minutes
+                dT_dt = -U / C * (indoor_temp - outdoor_temp) + P_hvac / C
+                new_temp = indoor_temp + dT_dt * dt
+                value = new_temp
+
+            # Calculate humidity using a mass-balance approach
+            if sensor.type == 'humidity':
+                indoor_humidity = value  # Current indoor humidity
+                ventilation_rate = 0.1  # Example ventilation rate
+                internal_sources = 0.5  # Example internal moisture sources (e.g., occupants)
+                dt = 1  # Time step in minutes
+                dH_dt = ventilation_rate * (outdoor_humidity - indoor_humidity) + internal_sources
+                new_humidity = indoor_humidity + dH_dt * dt
+                value = new_humidity
 
             return value
 
@@ -775,623 +798,262 @@ class SmartHomeSimulator:
             
             # Get base range for sensor type
             sensor_type = sensor.type.lower()
-            if sensor_type not in base_ranges:
-                logger.warning(f"Unknown sensor type: {sensor_type}, using temperature as default")
-                base_min, base_max = base_ranges['temperature']
-            else:
-                base_min, base_max = base_ranges[sensor_type]
+            base_min, base_max = base_ranges.get(sensor_type, base_ranges['temperature'])
             
             # Get current value or use midpoint
             current = sensor.current_value if sensor.current_value is not None else (base_min + base_max) / 2
             
             # Get room type and indoor/outdoor status
-            room_type = None
-            is_indoor = True
-            if sensor.device and sensor.device.room:
-                room_type = sensor.device.room.room_type
-                is_indoor = sensor.device.room.is_indoor
+            room_type = sensor.device.room.room_type if sensor.device and sensor.device.room else None
+            is_indoor = sensor.device.room.is_indoor if sensor.device and sensor.device.room else True
             
-            # Handle binary sensors with stronger weather influence
+            # Handle sensor types
             if sensor_type in ['motion', 'door', 'window', 'smoke', 'co', 'contact_sensor', 'status', 'schedule']:
-                # Get weather impact for activity level
-                weather_impact = self._calculate_weather_impact(sensor_type, self.current_weather)
-                hour = self.simulation_time.effective_time.hour
-                
-                # Base probability heavily influenced by weather
-                base_prob = 0.2 * weather_impact
-                if 8 <= hour <= 22:
-                    base_prob *= 2.0  # Double probability during active hours
-                
-                # Specific adjustments for sensor types
-                if sensor_type == 'motion':
-                    prob = base_prob * (2.0 if 8 <= hour <= 22 else 0.2)  # More pronounced day/night difference
-                elif sensor_type in ['smoke', 'co']:
-                    prob = 0.001  # Very rare activation
-                elif sensor_type == 'contact_sensor':
-                    prob = base_prob
-                elif sensor_type == 'status':
-                    prob = base_prob * 1.5
-                elif sensor_type == 'schedule':
-                    # For schedule, we want more stable behavior
-                    # Morning and evening watering schedules for irrigation
-                    if (5 <= hour <= 8) or (17 <= hour <= 20):
-                        prob = 0.7  # High probability during typical watering times
-                    else:
-                        prob = 0.05  # Low probability during other times
-                    
-                    # Weather affects watering schedule
-                    if self.current_weather in [WeatherCondition.RAINY, WeatherCondition.HEAVY_RAIN, WeatherCondition.STORMY]:
-                        prob *= 0.2  # Much less likely to water during rain
-                else:  # door/window
-                    prob = base_prob
-                    if not is_indoor:
-                        # Much stronger weather influence on outdoor sensors
-                        if self.current_weather in [WeatherCondition.STORMY, WeatherCondition.HEAVY_RAIN, WeatherCondition.HEAVY_SNOW]:
-                            prob *= 0.1  # Very unlikely in severe weather
-                        elif self.current_weather in [WeatherCondition.SUNNY, WeatherCondition.PARTLY_CLOUDY]:
-                            prob *= 2.0  # Much more likely in nice weather
-                
-                # Generate value with stronger hysteresis
-                if current > 0:
-                    prob *= 2.0  # Higher probability to stay active if already active
-                
-                return 1 if random.random() < prob else 0
-            
-            # Handle moisture for irrigation system
+                return self._handle_binary_sensors(sensor_type, current, base_min, base_max, is_indoor)
             elif sensor_type == 'moisture':
-                # Soil moisture level (%)
-                # Get weather impact - rainy weather increases soil moisture
-                weather_impact = self._calculate_weather_impact('humidity', self.current_weather)
-                
-                # Base moisture level
-                base_moisture = 40  # Default soil moisture
-                
-                # Weather effects on soil moisture
-                if self.current_weather in [WeatherCondition.RAINY, WeatherCondition.HEAVY_RAIN, WeatherCondition.STORMY]:
-                    # Rain increases soil moisture
-                    weather_modifier = 20 * weather_impact
-                elif self.current_weather in [WeatherCondition.SUNNY, WeatherCondition.PARTLY_CLOUDY]:
-                    # Hot/sunny weather decreases soil moisture
-                    weather_modifier = -15 * (2 - weather_impact)
-                else:
-                    weather_modifier = 0
-                
-                # Calculate time-based drying effect (soil dries out over time)
-                hour = self.simulation_time.effective_time.hour
-                days_since_update = 0  # Placeholder for actual tracking
-                drying_factor = min(30, days_since_update * 3)  # Soil dries out over days
-                
-                # Apply modifiers
-                modified_value = base_moisture + weather_modifier - drying_factor
-                
-                # Add watering effect if irrigation is active
-                # Check if the flow sensor for this device is showing water flow
-                if sensor.device:
-                    for other_sensor in sensor.device.sensors:
-                        if other_sensor.type == 'flow' and other_sensor.current_value > 0:
-                            modified_value += 30  # Significant increase from watering
-                
-                # Ensure value stays within bounds
-                return max(0, min(100, modified_value))
-                
-            # Handle mode for various devices (HVAC, blinds, etc.)
+                return self._handle_moisture_sensor(sensor, current, base_min, base_max, is_indoor)
             elif sensor_type == 'mode':
-                # Mode is a discrete setting that shouldn't change on its own unless controlled by user
-                # Just return the current value, or default to 0 (usually means 'Auto' mode)
-                device_type = sensor.device.type if sensor.device else None
-                
-                # Default values for different device types
-                default_modes = {
-                    'hvac_system': 0,  # 0=Auto, 1=Cool, 2=Heat, 3=Fan, 4=Dry
-                    'thermostat': 0,   # 0=Auto, 1=Cool, 2=Heat, 3=Fan
-                    'blinds': 0,       # 0=Manual, 1=Auto, 2=Scheduled
-                    'irrigation': 0     # 0=Manual, 1=Scheduled
-                }
-                
-                # Use device-specific default or general default (0)
-                default_mode = default_modes.get(device_type, 0)
-                
-                # Return current value or default
-                return int(current if current is not None else default_mode)
-                
-            # Handle set temperature for HVAC/thermostat 
+                return self._handle_mode_sensor(sensor, current)
             elif sensor_type == 'set_temperature':
-                # Set temperature is a user-controlled value that shouldn't change on its own
-                # Just return the current value or a sensible default
-                device_type = sensor.device.type if sensor.device else None
-                
-                # Default values for different device types
-                default_temps = {
-                    'hvac_system': 22.0,  # Central AC default temp
-                    'thermostat': 21.0,   # Room thermostat default
-                    'default': 22.0
-                }
-                
-                # Use device-specific default or general default
-                default_temp = default_temps.get(device_type, default_temps['default'])
-                
-                # Return current value or default
-                return current if current is not None else default_temp
-                
-            # Handle power state for devices
+                return self._handle_set_temperature_sensor(sensor, current)
             elif sensor_type == 'power':
-                # Power is a binary on/off state
-                # Just return the current value or default to off (0)
-                return 1 if current == 1 else 0
-                
-            # Handle fan speed for HVAC
+                return self._handle_power_sensor(current)
             elif sensor_type == 'fan_speed':
-                # Fan speed is a user-controlled value that shouldn't change on its own
-                # Default is medium (3 on a scale of 1-5)
-                return int(current if current is not None else 3)
-                
-            # Handle water flow rate for irrigation
+                return self._handle_fan_speed_sensor(current)
             elif sensor_type == 'flow':
-                # Water flow depends on whether irrigation is active (controlled by schedule)
-                flow_rate = 0  # Default is no flow
-                
-                # Check if the schedule is active for this device
-                if sensor.device:
-                    for other_sensor in sensor.device.sensors:
-                        if other_sensor.type == 'schedule' and other_sensor.current_value == 1:
-                            # Schedule is active, so water is flowing
-                            flow_rate = random.uniform(2.5, 4.5)  # L/min
-                
-                return flow_rate
-                
-            # Handle color temperature with weather influence
+                return self._handle_flow_sensor(sensor)
             elif sensor_type == 'color_temp':
-                hour = self.simulation_time.effective_time.hour
-                weather_impact = self._calculate_weather_impact('light', self.current_weather)
-                
-                # Base temperature based on time of day
-                if hour < 6 or hour > 18:
-                    base_temp = random.uniform(2700, 3500)  # Warm white
-                else:
-                    base_temp = random.uniform(5000, 6500)  # Cool white
-                
-                # Adjust based on weather (cloudy/stormy = warmer, sunny = cooler)
-                temp_adjustment = (1 - weather_impact) * 1000  # More pronounced weather effect
-                return max(2700, min(6500, base_temp + temp_adjustment))
-                
-            # Handle position for smart blinds
+                return self._handle_color_temp_sensor()
             elif sensor_type == 'position':
-                # Position depends on mode and light level
-                position = current  # Start with current position
-                
-                # Check if there's a mode setting for this device
-                mode = 0  # Default to manual mode
-                if sensor.device:
-                    for other_sensor in sensor.device.sensors:
-                        if other_sensor.type == 'mode':
-                            mode = int(other_sensor.current_value or 0)
-                
-                # Mode 0: Manual - keep current position
-                # Mode 1: Auto (Light-based) - adjust based on light level and weather
-                # Mode 2: Scheduled - follow time-based schedule
-                
-                if mode == 1:  # Auto (Light-based)
-                    # Get weather and time info
-                    weather_impact = self._calculate_weather_impact('light', self.current_weather)
-                    hour = self.simulation_time.effective_time.hour
-                    
-                    # Determine target position based on light level
-                    # Sunny weather = more closed blinds, cloudy = more open
-                    if weather_impact > 0.7 and 9 <= hour <= 17:
-                        # Bright day - close blinds more
-                        target_position = 20  # Mostly closed (20% open)
-                    elif weather_impact < 0.3 or hour < 7 or hour > 19:
-                        # Dark conditions - open blinds
-                        target_position = 90  # Mostly open
-                    else:
-                        # Moderate conditions
-                        target_position = 50  # Half open
-                    
-                    # Move gradually toward target (max 10% change at a time for realism)
-                    if abs(position - target_position) > 10:
-                        position += 10 if target_position > position else -10
-                    else:
-                        position = target_position
-                        
-                elif mode == 2:  # Scheduled
-                    hour = self.simulation_time.effective_time.hour
-                    
-                    # Morning schedule - open blinds
-                    if 7 <= hour <= 9:
-                        target_position = 80  # Mostly open
-                    # Evening schedule - close blinds
-                    elif 19 <= hour <= 22:
-                        target_position = 10  # Mostly closed
-                    # Night schedule - closed for privacy
-                    elif 22 <= hour or hour < 6:
-                        target_position = 0  # Fully closed
-                    # Daytime schedule - partially open
-                    else:
-                        target_position = 60  # Partially open
-                    
-                    # Move gradually toward target (max 10% change at a time for realism)
-                    if abs(position - target_position) > 10:
-                        position += 10 if target_position > position else -10
-                    else:
-                        position = target_position
-                
-                # Ensure value stays within bounds
-                return max(0, min(100, position))
-            
-            # Handle numeric sensors with enhanced weather impact
+                return self._handle_position_sensor(sensor, current)
             else:
-                # Get weather impact
-                weather_impact = self._calculate_weather_impact(sensor_type, self.current_weather)
-                
-                # Calculate time-based variation (daily cycle)
-                hour = self.simulation_time.effective_time.hour
-                time_factor = math.sin((hour - 6) * math.pi / 12)  # Peak at noon
-                
-                # Apply weather impacts based on sensor type
-                if sensor_type == 'temperature':
-                    # Get outdoor temperature from environmental state
-                    outdoor_temp = self.env_state.temperature_celsius
-                    
-                    # Check if there's an active whole home AC in the system
-                    whole_home_ac = None
-                    ac_settings = {}
-                    
-                    try:
-                        with self.db() as session:
-                            # Find any whole home AC device that is active
-                            whole_home_ac = session.query(Device).filter(
-                                Device.type == 'hvac_system',
-                                Device.is_active == True
-                            ).first()
-                            
-                            if whole_home_ac:
-                                # Get AC settings from its sensors
-                                for ac_sensor in whole_home_ac.sensors:
-                                    ac_settings[ac_sensor.type] = ac_sensor.current_value
-                    except Exception as e:
-                        logger.error(f"Error checking for whole home AC: {e}")
-                    
-                    # Calculate realistic indoor temperature based on outdoor conditions
-                    if is_indoor:
-                        # Building insulation factor (0-1, higher means better insulated)
-                        # Different room types have different insulation characteristics
-                        insulation_factors = {
-                            'living_room': 0.8,
-                            'bedroom': 0.75,
-                            'kitchen': 0.7,
-                            'bathroom': 0.65,
-                            'basement': 0.9,  # Basements are well insulated
-                            'attic': 0.4,     # Attics have poor insulation
-                            'garage': 0.5,    # Garages have moderate insulation
-                            'hallway': 0.7,
-                            'office': 0.8,
-                            'default': 0.75
-                        }
-                        
-                        # Get insulation factor based on room type
-                        room_key = room_type.lower().replace(' ', '_') if room_type else 'default'
-                        insulation_factor = insulation_factors.get(room_key, insulation_factors['default'])
-                        
-                        # Thermal lag - indoor temperature responds slowly to outdoor changes
-                        # Previous value has more weight for well-insulated rooms
-                        thermal_lag_factor = insulation_factor * 0.7  # 0-0.7 scale
-                        
-                        # Thermal transfer calculation - how much outdoor temperature affects indoor
-                        outdoor_influence = 1 - insulation_factor  # Better insulation = less outdoor influence
-                        
-                        # Preferred indoor temperature (comfort zone)
-                        preferred_temp = 22 + (time_factor * 1.5)  # 20.5°C to 23.5°C throughout the day
-                        
-                        # If whole home AC is active, use its set temperature as the preferred temp
-                        if whole_home_ac and ac_settings.get('power', 0) == 1:
-                            ac_set_temp = ac_settings.get('set_temperature')
-                            ac_mode = ac_settings.get('mode', 0)
-                            ac_fan_speed = ac_settings.get('fan_speed', 3)
-                            
-                            if ac_set_temp is not None:
-                                # Mode values: 0=Auto, 1=Cool, 2=Heat, 3=Fan, 4=Dry
-                                # In cooling mode (mode 1), AC works to cool the house
-                                if ac_mode == 1 and outdoor_temp > ac_set_temp:
-                                    preferred_temp = ac_set_temp
-                                    
-                                    # Fan speed affects how quickly temperature changes (1-5)
-                                    # Higher fan speed means faster temperature change
-                                    fan_factor = ac_fan_speed / 5.0
-                                    
-                                    # Increase cooling efficiency with fan speed
-                                    outdoor_influence *= max(0.3, 1 - (fan_factor * 0.5))
-                                    
-                                    # AC can overcome some thermal lag
-                                    thermal_lag_factor *= max(0.3, 1 - (fan_factor * 0.3))
-                                    
-                                # In heating mode (mode 2), AC works to heat the house
-                                elif ac_mode == 2 and outdoor_temp < ac_set_temp:
-                                    preferred_temp = ac_set_temp
-                                    
-                                    # Fan speed affects how quickly temperature changes
-                                    fan_factor = ac_fan_speed / 5.0
-                                    
-                                    # Increase heating efficiency with fan speed
-                                    outdoor_influence *= max(0.3, 1 - (fan_factor * 0.5))
-                                    
-                                    # AC can overcome some thermal lag
-                                    thermal_lag_factor *= max(0.3, 1 - (fan_factor * 0.3))
-                                    
-                                # In auto mode (mode 0), AC works to maintain set temperature
-                                elif ac_mode == 0:
-                                    preferred_temp = ac_set_temp
-                                    
-                                    # Fan speed affects how quickly temperature changes
-                                    fan_factor = ac_fan_speed / 5.0
-                                    
-                                    # Increase HVAC efficiency with fan speed
-                                    outdoor_influence *= max(0.3, 1 - (fan_factor * 0.5))
-                                    
-                                    # AC can overcome some thermal lag
-                                    thermal_lag_factor *= max(0.3, 1 - (fan_factor * 0.3))
-                        
-                        # Calculate new indoor temperature
-                        # Formula: new_temp = (previous_temp * thermal_lag) + 
-                        #                     (comfort_temp * (1 - outdoor_influence)) +
-                        #                     (outdoor_temp * outdoor_influence * (1 - thermal_lag))
-                        temperature_diff = outdoor_temp - preferred_temp
-                        
-                        # Start with previous temperature (thermal mass effect)
-                        new_temp = current * thermal_lag_factor
-                        
-                        # Add influence of comfort temperature
-                        new_temp += preferred_temp * (1 - thermal_lag_factor) * (1 - outdoor_influence)
-                        
-                        # Add influence of outdoor temperature
-                        new_temp += (preferred_temp + temperature_diff * outdoor_influence) * (1 - thermal_lag_factor)
-                        
-                        # Apply seasonal adjustments
-                        month = datetime.now().month
-                        is_winter = 11 <= month or month <= 2
-                        is_summer = 6 <= month <= 8
-                        
-                        if is_winter:
-                            # Winter: Indoor tends to be warmer than outdoor, heating is active
-                            if outdoor_temp < 5:
-                                new_temp = max(new_temp, preferred_temp - 1)  # Heating keeps indoor temperature up
-                        elif is_summer:
-                            # Summer: Indoor tends to be cooler than outdoor in hot weather
-                            if outdoor_temp > 28:
-                                new_temp = min(new_temp, preferred_temp + 3)  # Indoor still warmer but limited
-                                
-                        # Limit to realistic ranges
-                        modified_value = max(10, min(35, new_temp))
-                    else:
-                        # Outdoor temperature sensor - use environmental state with minor variations
-                        local_variation = random.uniform(-1.5, 1.5)  # Local microclimate variations
-                        modified_value = outdoor_temp + local_variation
-                
-                elif sensor_type == 'humidity':
-                    # Get the actual weather humidity from environmental state
-                    outdoor_humidity = self.env_state.humidity_percent
-                    
-                    if is_indoor:
-                        # Building envelope impact on humidity transfer
-                        envelope_factors = {
-                            'living_room': 0.7,
-                            'bedroom': 0.7,
-                            'kitchen': 0.6,  # Kitchens have more moisture sources
-                            'bathroom': 0.5, # Bathrooms have more moisture sources
-                            'basement': 0.8, # Basements better sealed but tend to be more humid
-                            'attic': 0.4,    # Attics have poor humidity control
-                            'garage': 0.5,   # Garages have moderate sealing
-                            'hallway': 0.7,
-                            'office': 0.8,
-                            'default': 0.7
-                        }
-                        
-                        # Get building envelope factor based on room type
-                        room_key = room_type.lower().replace(' ', '_') if room_type else 'default'
-                        envelope_factor = envelope_factors.get(room_key, envelope_factors['default'])
-                        
-                        # Hour of day for activity patterns
-                        hour = self.simulation_time.effective_time.hour
-                        
-                        # Humidity lag factor - indoor humidity changes slower than outdoor
-                        humidity_lag = envelope_factor * 0.6  # 0-0.6 scale
-                        
-                        # Base indoor humidity calculation
-                        # Start with current humidity (persistence)
-                        indoor_humidity = current * humidity_lag
-                        
-                        # Relationship between outdoor temperature and indoor humidity
-                        outdoor_temp = self.env_state.temperature_celsius
-                        
-                        # Calculate dew point and absolute humidity effects
-                        # As outdoor temp rises relative to indoor, condensation decreases, relative humidity decreases
-                        # As outdoor temp falls relative to indoor, condensation increases, relative humidity increases
-                        
-                        # Calculate comfortable humidity range based on temperature
-                        # Higher temperatures = lower comfortable humidity
-                        ideal_humidity = max(30, min(60, 80 - outdoor_temp))
-                        
-                        # Influence of outdoor humidity depends on temp differential and envelope
-                        temp_differential = abs(outdoor_temp - (current if sensor_type == 'temperature' else 22))
-                        outdoor_influence = (1 - envelope_factor) * max(0.3, 1 - (temp_differential * 0.05))
-                        
-                        # Add outdoor humidity influence
-                        indoor_humidity += outdoor_humidity * outdoor_influence * (1 - humidity_lag)
-                        
-                        # Add ideal humidity influence (HVAC effect)
-                        indoor_humidity += ideal_humidity * (1 - outdoor_influence) * (1 - humidity_lag)
-                        
-                        # Room-specific additional effects
-                        if room_type:
-                            if room_type.lower() == 'bathroom':
-                                # Bathrooms tend to be more humid due to showers
-                                shower_times = [7, 8, 9, 19, 20, 21, 22]
-                                shower_factor = 25 if hour in shower_times else 5
-                                indoor_humidity += shower_factor * (1 - humidity_lag)
-                            elif room_type.lower() == 'kitchen':
-                                # Kitchens have cooking activities
-                                cooking_times = [7, 8, 12, 13, 18, 19, 20]
-                                cooking_factor = 15 if hour in cooking_times else 3
-                                indoor_humidity += cooking_factor * (1 - humidity_lag)
-                            elif room_type.lower() == 'basement':
-                                # Basements tend to be more humid due to ground contact
-                                indoor_humidity += 8 * (1 - humidity_lag)
-                        
-                        # Weather effects on indoor humidity
-                        if self.current_weather in [WeatherCondition.RAINY, WeatherCondition.HEAVY_RAIN, 
-                                                  WeatherCondition.STORMY, WeatherCondition.FOGGY]:
-                            # Rainy weather increases indoor humidity more
-                            indoor_humidity += 5 * (1 - envelope_factor)
-                        elif self.current_weather in [WeatherCondition.SUNNY, WeatherCondition.PARTLY_CLOUDY] and outdoor_temp > 25:
-                            # Hot sunny days can reduce indoor humidity
-                            indoor_humidity -= 3 * (1 - envelope_factor)
-                        
-                        # Limit to realistic range
-                        modified_value = max(20, min(90, indoor_humidity))
-                    else:
-                        # Outdoor humidity sensor - use environmental data with minor variations
-                        local_variation = random.uniform(-5, 5)  # Local variations
-                        modified_value = max(10, min(100, outdoor_humidity + local_variation))
-                
-                # Handle other sensor types that aren't specifically handled above
-                elif sensor_type == 'light':
-                    # Calculate light level based on weather and time of day
-                    weather_impact = self._calculate_weather_impact('light', self.current_weather)
-                    
-                    # Base light level based on time of day
-                    hour = self.simulation_time.effective_time.hour
-                    if 7 <= hour <= 19:  # Daytime
-                        base_light = 600 * weather_impact  # Full daylight affected by weather
-                    elif hour < 5 or hour > 21:  # Night
-                        base_light = 50  # Low ambient light at night
-                    else:  # Dawn/dusk
-                        base_light = 250 * weather_impact  # Intermediate level
-                    
-                    # Adjust for indoor vs outdoor
-                    if is_indoor:
-                        # Indoor light is reduced
-                        base_light *= 0.3
-                        
-                        # Room-specific adjustments
-                        if room_type:
-                            if room_type.lower() in ['bathroom', 'hallway', 'bedroom']:
-                                base_light *= 0.7  # Darker rooms
-                            elif room_type.lower() in ['kitchen', 'living_room', 'office']:
-                                base_light *= 1.2  # Brighter rooms
-                    
-                    # Add randomness
-                    modified_value = base_light * (0.8 + 0.4 * random.random())
-                    
-                elif sensor_type == 'air_quality':
-                    # Air quality (AQI) - lower is better
-                    weather_impact = self._calculate_weather_impact('air_quality', self.current_weather)
-                    outdoor_aqi = 50 * (2 - weather_impact)  # Weather affects outdoor AQI
-                    
-                    if is_indoor:
-                        # Indoor air quality is generally better than outdoor
-                        modified_value = outdoor_aqi * 0.7
-                        
-                        # Room-specific adjustments
-                        if room_type:
-                            if room_type.lower() in ['kitchen']:
-                                modified_value *= 1.3  # Kitchen can have worse air quality (cooking)
-                            elif room_type.lower() in ['bathroom']:
-                                modified_value *= 1.1  # Slightly worse
-                    else:
-                        modified_value = outdoor_aqi
-                        
-                elif sensor_type == 'pressure':
-                    # Atmospheric pressure (hPa)
-                    # Base pressure level (normal sea level pressure)
-                    base_pressure = 1013.25
-                    
-                    # Weather influence on pressure
-                    if self.current_weather in [WeatherCondition.STORMY, WeatherCondition.HEAVY_RAIN]:
-                        # Low pressure during storms
-                        pressure_mod = -15
-                    elif self.current_weather in [WeatherCondition.SUNNY, WeatherCondition.PARTLY_CLOUDY]:
-                        # High pressure during fair weather
-                        pressure_mod = 10
-                    else:
-                        pressure_mod = 0
-                        
-                    # Random variation
-                    variation = random.uniform(-5, 5)
-                    
-                    # Indoor pressure matches outdoor, but with less variation
-                    if is_indoor:
-                        modified_value = base_pressure + (pressure_mod * 0.3) + (variation * 0.3)
-                    else:
-                        modified_value = base_pressure + pressure_mod + variation
-                        
-                elif sensor_type == 'co2':
-                    # CO2 levels (ppm)
-                    # Outdoor baseline (~ 400 ppm)
-                    outdoor_co2 = 400
-                    
-                    if is_indoor:
-                        # Indoor CO2 levels are higher
-                        base_co2 = 600
-                        
-                        # Room-specific and time-based adjustments
-                        hour = self.simulation_time.effective_time.hour
-                        occupancy_factor = 1.0
-                        
-                        # Higher CO2 when rooms are likely occupied
-                        if 8 <= hour <= 22:
-                            occupancy_factor = 1.5
-                            
-                        if room_type:
-                            if room_type.lower() in ['bedroom'] and (0 <= hour <= 7 or 22 <= hour <= 23):
-                                # High CO2 in bedrooms at night when people sleep
-                                occupancy_factor = 2.0
-                            elif room_type.lower() in ['living_room', 'kitchen'] and (17 <= hour <= 21):
-                                # High CO2 in living areas during evening
-                                occupancy_factor = 1.8
-                        
-                        modified_value = base_co2 * occupancy_factor + random.uniform(-50, 50)
-                    else:
-                        # Outdoor CO2 is relatively stable
-                        modified_value = outdoor_co2 + random.uniform(-20, 20)
-                        
-                else:
-                    # Default handling for any other numeric sensor type
-                    # Use the weather impact as a modifier on the current value
-                    weather_impact = self._calculate_weather_impact(sensor_type, self.current_weather)
-                    base_value = (base_min + base_max) / 2  # Use the midpoint of the range
-                    
-                    # Calculate a modifier based on weather impact
-                    weather_modifier = (weather_impact - 1.0) * 0.2 * (base_max - base_min)
-                    
-                    # Calculate time-based variation
-                    hour = self.simulation_time.effective_time.hour
-                    time_modifier = math.sin((hour - 6) * math.pi / 12) * 0.1 * (base_max - base_min)
-                    
-                    # Apply modifiers to the base value
-                    modified_value = base_value + weather_modifier + time_modifier
-                    
-                    # Ensure value stays within the defined range
-                    modified_value = max(base_min, min(base_max, modified_value))
-                
-                # Add small random variation (±5%)
-                variation = random.uniform(-0.05, 0.05) * modified_value
-                final_value = modified_value + variation
-                
-                # Ensure value stays within bounds
-                final_value = max(base_min, min(base_max, final_value))
-                
-                # Round based on sensor type
-                if sensor_type in ['temperature']:
-                    final_value = round(final_value, 1)
-                elif sensor_type in ['humidity', 'light', 'air_quality', 'wind_speed', 'rain_rate']:
-                    final_value = round(final_value, 0)
-                else:
-                    final_value = round(final_value, 2)
-                
-                return final_value
-                
+                return self._calculate_sensor_value(sensor_type, base_min, base_max, is_indoor)
+
         except Exception as e:
             logger.error(f"Error generating sensor value: {str(e)}")
             return sensor.current_value or (base_min + base_max) / 2  # Return current value or midpoint
+
+    def _handle_binary_sensors(self, sensor_type, current, base_min, base_max, is_indoor):
+        """Handle binary sensors with stronger weather influence"""
+        weather_impact = self._calculate_weather_impact(sensor_type, self.current_weather)
+        hour = self.simulation_time.effective_time.hour
+        
+        # Base probability heavily influenced by weather
+        base_prob = 0.2 * weather_impact
+        if 8 <= hour <= 22:
+            base_prob *= 2.0  # Double probability during active hours
+        
+        # Specific adjustments for sensor types
+        prob = self._calculate_binary_sensor_probability(sensor_type, base_prob, hour, is_indoor)
+        
+        # Generate value with stronger hysteresis
+        if current > 0:
+            prob *= 2.0  # Higher probability to stay active if already active
+        
+        return 1 if random.random() < prob else 0
+
+    def _calculate_binary_sensor_probability(self, sensor_type, base_prob, hour, is_indoor):
+        """Calculate probability for binary sensors based on type and conditions"""
+        if sensor_type == 'motion':
+            return base_prob * (2.0 if 8 <= hour <= 22 else 0.2)  # More pronounced day/night difference
+        elif sensor_type in ['smoke', 'co']:
+            return 0.001  # Very rare activation
+        elif sensor_type == 'contact_sensor':
+            return base_prob
+        elif sensor_type == 'status':
+            return base_prob * 1.5
+        elif sensor_type == 'schedule':
+            return self._calculate_schedule_probability(hour)
+        else:  # door/window
+            return self._calculate_door_window_probability(base_prob, is_indoor)
+
+    def _calculate_schedule_probability(self, hour):
+        """Calculate probability for schedule sensor"""
+        if (5 <= hour <= 8) or (17 <= hour <= 20):
+            return 0.7  # High probability during typical watering times
+        return 0.05  # Low probability during other times
+
+    def _calculate_door_window_probability(self, base_prob, is_indoor):
+        """Calculate probability for door/window sensors"""
+        if not is_indoor:
+            if self.current_weather in [WeatherCondition.STORMY, WeatherCondition.HEAVY_RAIN, WeatherCondition.HEAVY_SNOW]:
+                return base_prob * 0.1  # Very unlikely in severe weather
+            elif self.current_weather in [WeatherCondition.SUNNY, WeatherCondition.PARTLY_CLOUDY]:
+                return base_prob * 2.0  # Much more likely in nice weather
+        return base_prob
+
+    def _handle_moisture_sensor(self, sensor, current, base_min, base_max, is_indoor):
+        """Handle moisture sensor for irrigation system"""
+        weather_impact = self._calculate_weather_impact('humidity', self.current_weather)
+        base_moisture = 40  # Default soil moisture
+        
+        # Weather effects on soil moisture
+        weather_modifier = self._calculate_moisture_weather_effect(weather_impact)
+        
+        # Calculate time-based drying effect (soil dries out over time)
+        hour = self.simulation_time.effective_time.hour
+        days_since_update = 0  # Placeholder for actual tracking
+        drying_factor = min(30, days_since_update * 3)  # Soil dries out over days
+        
+        # Apply modifiers
+        modified_value = base_moisture + weather_modifier - drying_factor
+        
+        # Add watering effect if irrigation is active
+        if sensor.device:
+            for other_sensor in sensor.device.sensors:
+                if other_sensor.type == 'flow' and other_sensor.current_value > 0:
+                    modified_value += 30  # Significant increase from watering
+        
+        return max(0, min(100, modified_value))
+
+    def _calculate_moisture_weather_effect(self, weather_impact):
+        """Calculate weather effect on moisture"""
+        if self.current_weather in [WeatherCondition.RAINY, WeatherCondition.HEAVY_RAIN, WeatherCondition.STORMY]:
+            return 20 * weather_impact  # Rain increases soil moisture
+        elif self.current_weather in [WeatherCondition.SUNNY, WeatherCondition.PARTLY_CLOUDY]:
+            return -15 * (2 - weather_impact)  # Hot/sunny weather decreases soil moisture
+        return 0
+
+    def _handle_mode_sensor(self, sensor, current):
+        """Handle mode for various devices (HVAC, blinds, etc.)"""
+        device_type = sensor.device.type if sensor.device else None
+        default_modes = {
+            'hvac_system': 0,  # 0=Auto, 1=Cool, 2=Heat, 3=Fan, 4=Dry
+            'thermostat': 0,   # 0=Auto, 1=Cool, 2=Heat, 3=Fan
+            'blinds': 0,       # 0=Manual, 1=Auto, 2=Scheduled
+            'irrigation': 0     # 0=Manual, 1=Scheduled
+        }
+        default_mode = default_modes.get(device_type, 0)
+        return int(current if current is not None else default_mode)
+
+    def _handle_set_temperature_sensor(self, sensor, current):
+        """Handle set temperature for HVAC/thermostat"""
+        device_type = sensor.device.type if sensor.device else None
+        default_temps = {
+            'hvac_system': 22.0,  # Central AC default temp
+            'thermostat': 21.0,   # Room thermostat default
+            'default': 22.0
+        }
+        default_temp = default_temps.get(device_type, default_temps['default'])
+        return current if current is not None else default_temp
+
+    def _handle_power_sensor(self, current):
+        """Handle power state for devices"""
+        return 1 if current == 1 else 0
+
+    def _handle_fan_speed_sensor(self, current):
+        """Handle fan speed for HVAC"""
+        return int(current if current is not None else 3)
+
+    def _handle_flow_sensor(self, sensor):
+        """Handle water flow rate for irrigation"""
+        flow_rate = 0  # Default is no flow
+        if sensor.device:
+            for other_sensor in sensor.device.sensors:
+                if other_sensor.type == 'schedule' and other_sensor.current_value == 1:
+                    flow_rate = random.uniform(2.5, 4.5)  # L/min
+        return flow_rate
+
+    def _handle_color_temp_sensor(self):
+        """Handle color temperature with weather influence"""
+        hour = self.simulation_time.effective_time.hour
+        weather_impact = self._calculate_weather_impact('light', self.current_weather)
+        base_temp = random.uniform(2700, 3500) if hour < 6 or hour > 18 else random.uniform(5000, 6500)
+        temp_adjustment = (1 - weather_impact) * 1000  # More pronounced weather effect
+        return max(2700, min(6500, base_temp + temp_adjustment))
+
+    def _handle_position_sensor(self, sensor, current):
+        """Handle position for smart blinds"""
+        position = current  # Start with current position
+        mode = self._get_blind_mode(sensor)
+        
+        if mode == 1:  # Auto (Light-based)
+            target_position = self._calculate_blind_target_position()
+            position = self._move_towards_target(position, target_position)
+        elif mode == 2:  # Scheduled
+            target_position = self._calculate_blind_scheduled_position()
+            position = self._move_towards_target(position, target_position)
+        
+        return max(0, min(100, position))
+
+    def _get_blind_mode(self, sensor):
+        """Get the mode setting for the blinds"""
+        mode = 0  # Default to manual mode
+        if sensor.device:
+            for other_sensor in sensor.device.sensors:
+                if other_sensor.type == 'mode':
+                    mode = int(other_sensor.current_value or 0)
+        return mode
+
+    def _calculate_blind_target_position(self):
+        """Calculate target position for blinds based on light level and weather"""
+        weather_impact = self._calculate_weather_impact('light', self.current_weather)
+        hour = self.simulation_time.effective_time.hour
+        
+        if weather_impact > 0.7 and 9 <= hour <= 17:
+            return 20  # Mostly closed (20% open)
+        elif weather_impact < 0.3 or hour < 7 or hour > 19:
+            return 90  # Mostly open
+        return 50  # Half open
+
+    def _calculate_blind_scheduled_position(self):
+        """Calculate scheduled position for blinds"""
+        hour = self.simulation_time.effective_time.hour
+        if 7 <= hour <= 9:
+            return 80  # Mostly open
+        elif 19 <= hour <= 22:
+            return 10  # Mostly closed
+        elif 22 <= hour or hour < 6:
+            return 0  # Fully closed
+        return 60  # Partially open
+
+    def _move_towards_target(self, current, target):
+        """Move gradually toward target position (max 10% change at a time for realism)"""
+        if abs(current - target) > 10:
+            return current + (10 if target > current else -10)
+        return target
+
+    def _calculate_sensor_value(self, sensor_type, base_min, base_max, is_indoor):
+        """Calculate sensor value based on environmental conditions and room type"""
+        try:
+            # Get current time and weather
+            current_time = datetime.now()
+            outdoor_temp = self.env_state.temperature_celsius  # Access temperature from EnvironmentalState
+            outdoor_humidity = self.env_state.humidity_percent  # Access humidity from EnvironmentalState
+
+            # Calculate base value as the midpoint of the range
+            base_value = (base_min + base_max) / 2
+
+            # Calculate weather impact
+            weather_impact = self._calculate_weather_impact(sensor_type, self.env_state.weather_condition)
+
+            # Calculate time-based variation
+            hour = current_time.hour
+            time_modifier = math.sin((hour - 6) * math.pi / 12) * 0.1 * (base_max - base_min)
+
+            # Apply weather impact modifier
+            weather_modifier = (weather_impact - 1.0) * 0.2 * (base_max - base_min)
+
+            # Access outdoor conditions
+            outdoor_temp = self.env_state.temperature_celsius  # Access temperature from EnvironmentalState
+            outdoor_humidity = self.env_state.humidity_percent  # Access humidity from EnvironmentalState
+
+            # Adjust base value based on outdoor conditions
+            base_value += (outdoor_temp - base_value) * 0.1  # Influence of outdoor temperature
+            base_value += (outdoor_humidity - 50) * 0.05  # Influence of outdoor humidity (assuming 50% is neutral)
+
+            # Combine base value with modifiers
+            modified_value = base_value + weather_modifier + time_modifier
+
+            # Ensure value stays within the defined range
+            modified_value = max(base_min, min(base_max, modified_value))
+
+            # Add small random variation (±5%)
+            variation = random.uniform(-0.05, 0.05) * modified_value
+            return modified_value + variation
+        except Exception as e:
+            logger.error(f"Error calculating sensor value for {sensor_type}: {str(e)}")
+            return (base_min + base_max) / 2  # Return midpoint as fallback
 
     def start_container(self, container):
         """Start all sensors in a container"""
@@ -1483,6 +1145,8 @@ class SmartHomeSimulator:
                                 'safety_monitor': 'safety'
                             }.get(device_type, device_type)
                             
+                            logger.info(f"🔍 Processing device: {device.name} at {location} with {len(device.sensors)} sensors")
+
                             # Update sensor values
                             for sensor in device.sensors:
                                 # Merge sensor with current session
@@ -1491,6 +1155,8 @@ class SmartHomeSimulator:
                                 # Generate new sensor value
                                 new_value = self._generate_sensor_value(sensor)
                                 
+                                logger.info(f"🔍 Sensor: {sensor.name} - New value: {new_value} - Current value: {sensor.current_value}")
+
                                 # Only update if value has changed significantly
                                 if sensor.current_value is None or abs(new_value - sensor.current_value) >= 0.01:
                                     old_value = sensor.current_value
@@ -2020,3 +1686,23 @@ class SmartHomeSimulator:
         except Exception as e:
             logger.error(f"Error setting blinds parameters: {e}")
             return False
+
+    def add_room(self, room):
+        self.rooms.append(room)
+
+    def run_simulation(self, hvac_power, time_step, duration):
+        """Run the simulation for a specified duration."""
+        for _ in range(int(duration / time_step)):
+            # Use existing weather data from env_state
+            weather = self.env_state.weather_condition
+            outdoor_temp = weather.temperature
+            outdoor_humidity = weather.humidity
+
+            # Update the environment based on outdoor conditions
+            for room in self.rooms:
+                room.update_temperature(outdoor_temp, hvac_power, time_step)
+                room.update_humidity(outdoor_humidity, hvac_power * 0.1, time_step)
+            # Log or print the current state of each room
+            for room in self.rooms:
+                print(f"{room.name} - Temp: {room.temperature:.2f}°C, Humidity: {room.humidity:.2f}%")
+            time.sleep(time_step)  # Wait for the next time step
