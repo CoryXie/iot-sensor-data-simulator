@@ -436,6 +436,7 @@ class SmartHomeSimulator:
             # Get current time and weather
             current_time = datetime.now()
             weather = self.env_state.weather_condition
+            outdoor_temp = weather.temperature  # Assuming weather has a temperature attribute
 
             # Calculate time of day factor (0-1)
             hour = current_time.hour
@@ -449,8 +450,31 @@ class SmartHomeSimulator:
 
             # Base value calculation
             base_value = base_range['base']
+
+            # Adjust base value for temperature sensor if AC is active
+            if sensor.type == 'temperature' and self.preferred_temperature is not None:
+                # Gradually adjust towards preferred temperature
+                current_temp = base_value  # Assuming base_value is the current temperature
+                rate_of_change = 0.5  # Degrees per minute
+                time_elapsed = 1  # Assuming this method is called every minute
+                change = rate_of_change * time_elapsed
+                if current_temp < self.preferred_temperature:
+                    base_value = min(current_temp + change, self.preferred_temperature)
+                elif current_temp > self.preferred_temperature:
+                    base_value = max(current_temp - change, self.preferred_temperature)
+
+            # Combine outdoor temperature into the final value
+            if sensor.type == 'temperature':
+                # Adjust the base value based on outdoor temperature with a more realistic model
+                base_value = (base_value * 0.7) + (outdoor_temp * 0.3)  # Weighted average for realism
+
+            # Introduce a more dynamic variation based on time and weather
             variation = random.uniform(-sensor.variation_range, sensor.variation_range)
-            
+            if weather.humidity > 70:  # Example condition for high humidity
+                variation *= 0.8  # Reduce variation in high humidity
+            elif weather.humidity < 30:  # Example condition for low humidity
+                variation *= 1.2  # Increase variation in low humidity
+
             # Combine all factors
             value = base_value + (variation * room_factor * time_factor * weather_impact)
 
@@ -1853,27 +1877,48 @@ class SmartHomeSimulator:
                 session.add(ac_device)
                 session.commit()
                 
+                # Update the simulation parameters
+                self.update_ac_simulation_parameters(ac_device)
+                
                 # Log the change
                 logger.info(f"Updated whole home AC: Power={'On' if power else 'Off'}, "
                            f"Temp={temperature}°C, Mode={mode}, Fan={fan_speed}")
-                
-                # Emit device update event
-                asyncio.create_task(self.event_system.emit('device_update', {
-                    'device_id': ac_device.id,
-                    'name': ac_device.name,
-                    'type': 'hvac_system',
-                    'power': power,
-                    'temperature': temperature,
-                    'mode': mode,
-                    'fan_speed': fan_speed,
-                    'update_counter': ac_device.update_counter
-                }))
                 
                 return True
                 
         except Exception as e:
             logger.error(f"Error setting AC parameters: {e}")
             return False
+
+    def update_ac_simulation_parameters(self, ac_device):
+        """
+        Update the simulation parameters based on the AC device settings.
+        """
+        if ac_device.is_active:
+            # Get the current settings from the AC device
+            ac_set_temp = None
+            ac_mode = None
+            ac_fan_speed = None
+            
+            for sensor in ac_device.sensors:
+                if sensor.type == 'set_temperature':
+                    ac_set_temp = sensor.current_value
+                elif sensor.type == 'mode':
+                    ac_mode = sensor.current_value
+                elif sensor.type == 'fan_speed':
+                    ac_fan_speed = sensor.current_value
+            
+            # Logic to adjust the simulation based on the AC settings
+            if ac_set_temp is not None:
+                # Update the preferred temperature in the simulation
+                self.preferred_temperature = ac_set_temp
+                logger.info(f"AC set temperature updated to: {ac_set_temp}°C")
+            
+            # Additional logic can be added here to adjust other simulation parameters
+            # based on the AC mode and fan speed if necessary.
+        else:
+            # Logic for when the AC is off
+            logger.info("AC is turned off, maintaining current simulation state.")
     
     # Method to control smart thermostat
     def set_thermostat(self, room_id: int, power: bool, temperature: float, mode: int):
@@ -1929,14 +1974,18 @@ class SmartHomeSimulator:
             
     # Method to control smart blinds
     def set_blinds(self, room_id: int, position: int, mode: int):
-        """
-        Set parameters for smart blinds
+        # Ensure position and mode are integers
+        position = int(position)
+        mode = int(mode)
         
-        Args:
-            room_id: ID of the room where the blinds are located
-            position: Position from 0 (closed) to 100 (open)
-            mode: 0=Manual, 1=Auto (light-based), 2=Scheduled
-        """
+        # Validate position range
+        if position < 0 or position > 100:
+            raise ValueError('Position must be between 0 and 100')
+        
+        # Validate mode range
+        if mode < 0 or mode > 2:
+            raise ValueError('Mode must be 0 (Manual), 1 (Auto), or 2 (Scheduled)')
+        
         try:
             with self.db() as session:
                 # Find the blinds in the specified room

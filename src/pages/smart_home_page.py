@@ -16,7 +16,6 @@ import json
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from src.utils.smart_home_simulator import SmartHomeSimulator
-from src.components.device_controls import DeviceControls
 from src.database.database import db_session
 from src.utils.initial_data import initialize_scenarios
 from collections import defaultdict
