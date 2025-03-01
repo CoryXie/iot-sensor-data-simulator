@@ -16,9 +16,11 @@ DEFAULT_INTERVAL = 2
 class SensorsPage():
     '''This class represents the sensors page.'''
 
-    def __init__(self, iot_hub_helper=None):
+    def __init__(self, iot_hub_helper=None, event_system=None, state_manager=None):
         '''Initializes the page'''
         self.iot_hub_helper = iot_hub_helper
+        self.event_system = event_system
+        self.state_manager = state_manager
         logger.info("Initializing SensorsPage")
         self.sensors = []
         self.list_items = []

@@ -5,6 +5,7 @@ from src.database import SessionLocal
 from src.models.room import Room
 from src.models.device import Device
 from src.models.sensor import Sensor
+from src.models.container import Container
 from src.utils.event_system import EventSystem
 from sqlalchemy.exc import SQLAlchemyError
 from typing import Dict, List
@@ -13,7 +14,7 @@ from sqlalchemy.orm import joinedload
 import random
 from datetime import datetime
 import threading
-import time
+import time  # Add time module for UI refresh timing
 from src.utils.smart_home_simulator import SmartHomeSimulator
 
 class FloorPlan:
@@ -33,6 +34,8 @@ class FloorPlan:
         self.pending_updates = {}  # Track sensors that need UI updates
         self.device_control_dialogs = {}  # Store device control dialogs
         self.simulator = SmartHomeSimulator.get_instance(self.event_system)  # Get simulator instance
+        self.last_ui_refresh = 0  # Track when we last refreshed the UI
+        self.ui_refresh_interval = 1.0  # Refresh UI at most once per second
         self._setup_event_handlers()
         
         # Start the update processing task
@@ -320,7 +323,9 @@ class FloorPlan:
                     # Device header with improved alignment
                     with ui.row().classes('w-full items-center justify-start gap-3 mb-3 pb-2 border-b border-gray-100'):
                         ui.icon('device_hub').classes('text-primary text-xl min-w-[28px]')
-                        ui.label(device_name).classes('text-lg font-semibold text-gray-800 truncate flex-grow')
+                        
+                        # Name with flex-grow to take available space
+                        ui.label(device_name).classes('text-lg font-semibold text-gray-800 flex-grow')
                         
                         # Add update counter bubble
                         counter_bubble = ui.badge('0').classes('min-w-[28px] bg-primary text-white rounded-full')
@@ -507,17 +512,45 @@ class FloorPlan:
             # Register our handlers
             self.event_system.on('device_update', self._handle_device_update)
             self.event_system.on('sensor_update', self._handle_sensor_update)
+            
+            # Start periodic UI refresh task
+            self._start_ui_refresh_task()
+            
             logger.info("Event handlers set up successfully")
         except Exception as e:
             logger.error(f"Error setting up event handlers: {e}")
+            
+    def _start_ui_refresh_task(self):
+        """Start a task to periodically refresh the UI"""
+        async def ui_refresh_loop():
+            while True:
+                try:
+                    # Check if enough time has passed since last refresh
+                    current_time = time.time()
+                    if (current_time - self.last_ui_refresh) >= self.ui_refresh_interval:
+                        # Perform a full UI refresh
+                        ui.update()
+                        self.last_ui_refresh = current_time
+                        logger.debug("Performed periodic UI refresh")
+                except Exception as e:
+                    logger.error(f"Error in UI refresh loop: {e}")
+                
+                # Sleep for a short interval to avoid CPU overuse
+                await asyncio.sleep(1.0)  # Use a longer interval here to reduce conflicts with direct updates
+        
+        # Schedule the UI refresh task
+        asyncio.create_task(ui_refresh_loop())
+        logger.info("Started periodic UI refresh task")
 
     async def _handle_device_update(self, data):
         """Handle device update events using data binding"""
         try:
-            logger.debug(f"Handling device update: {data}")
             device_id = data.get('device_id')
-            device_name = data.get('device_name', '')
+            device_name = data.get('name', '')
             updates = data.get('update_counter', 0)
+            
+            # Log to debug the data we're getting
+            logger.debug(f"Device update received: {device_id}, name: {device_name}, counter: {updates}")
             
             # Get room type from our mapping or database
             room_type = self.device_room_map.get(device_id)
@@ -541,7 +574,9 @@ class FloorPlan:
             if device_id in self.device_elements and 'counter' in self.device_elements[device_id]:
                 counter_badge = self.device_elements[device_id]['counter']
                 counter_badge.text = str(updates)
-                
+                # Force immediate update for this element
+                ui.update(counter_badge)
+                logger.debug(f"Updated counter badge for device {device_id} to {updates}")
         except Exception as e:
             logger.error(f"Error in device update handler: {str(e)}")
 
@@ -609,12 +644,14 @@ class FloorPlan:
     async def _handle_sensor_update(self, data):
         """Handle sensor update events using data binding"""
         try:
-            logger.debug(f"Handling sensor update: {data}")
+            # Log more details about the update
+            logger.debug(f"Sensor update received: {data}")
+            
             # Extract sensor data - handle both direct sensor updates and device updates
             sensor_id = data.get('sensor_id')  # From device update
             if not sensor_id:
                 sensor_id = data.get('id')  # From direct sensor update
-            sensor_name = data.get('device_name')
+            sensor_name = data.get('name')
                 
             device_id = data.get('device_id')
             new_value = data.get('value')
@@ -636,8 +673,13 @@ class FloorPlan:
                     formatted_value = f"{new_value:.2f}" if isinstance(new_value, (int, float)) else str(new_value)
                     formatted_value = f"{formatted_value} {unit}".strip()
                     
-                    # Update the label text directly
+                    # Update the label text directly - avoid batching for real-time responsiveness
                     sensor_label.text = formatted_value
+                    
+                    # Force immediate update for this element to ensure real-time display
+                    ui.update(sensor_label)
+                    
+                    logger.debug(f"Updated sensor {sensor_id} to {formatted_value}")
                 except Exception as e:
                     logger.error(f"Error updating sensor label: {str(e)}")
             else:
@@ -678,19 +720,66 @@ class FloorPlan:
     def reset_update_counters(self, device_id=None):
         """Reset update counters for all devices or a specific device"""
         try:
-            if device_id is not None:
-                # Reset specific device counter
-                if device_id in self.device_elements and 'counter' in self.device_elements[device_id]:
-                    self.device_elements[device_id]['counter'].text = "0"
-                    logger.debug(f"Reset update counter for device ID: {device_id}")
-            else:
-                # Reset all device counters
-                for dev_id in self.device_elements.keys():
-                    if dev_id in self.device_elements and 'counter' in self.device_elements[dev_id]:
-                        self.device_elements[dev_id]['counter'].text = "0"
-                logger.debug("Reset all device update counters")
+            with SessionLocal() as session:
+                if device_id:
+                    # Reset counter for a specific device
+                    device = session.query(Device).filter_by(id=device_id).first()
+                    if device:
+                        device.update_count = 0
+                        session.commit()
+                else:
+                    # Reset counters for all devices
+                    session.query(Device).update({Device.update_count: 0})
+                    session.commit()
+            logger.info(f"Reset update counters for {'device ID ' + str(device_id) if device_id else 'all devices'}")
         except Exception as e:
             logger.error(f"Error resetting update counters: {str(e)}")
+
+    def update_container_state(self, container_id=None, is_active=False):
+        """Update the UI based on the active state of a container"""
+        try:
+            logger.info(f"Updating floor plan for container {container_id}, active state: {is_active}")
+            
+            if container_id is None:
+                return
+                
+            # Get container details from the database
+            with SessionLocal() as session:
+                container = session.query(Container).filter_by(id=container_id).first()
+                
+                if not container:
+                    logger.warning(f"Container {container_id} not found in database")
+                    return
+                    
+                # Normalize the room type from container name
+                container_name_parts = container.name.split(" - ")
+                if len(container_name_parts) >= 2:
+                    room_type = container_name_parts[1]  # Get room type part
+                    normalized_room_type = self._normalize_room_type(room_type)
+                    
+                    logger.info(f"Updating room {normalized_room_type} for container {container.name}")
+                    
+                    # Update the room card if it exists
+                    if normalized_room_type in self.room_elements:
+                        room_card = self.room_elements[normalized_room_type]['container']
+                        
+                        # Update visual indication of active status
+                        if is_active:
+                            # Add active indicator
+                            room_card.classes('border-2 border-green-500 bg-green-50')
+                            logger.info(f"Marked room {normalized_room_type} as active")
+                        else:
+                            # Remove active indicator
+                            room_card.classes('border border-gray-200 bg-white')
+                            logger.info(f"Marked room {normalized_room_type} as inactive")
+                    else:
+                        logger.warning(f"Room {normalized_room_type} not found in UI elements")
+                else:
+                    logger.warning(f"Could not parse room type from container name: {container.name}")
+                
+        except Exception as e:
+            logger.error(f"Error updating container state: {e}")
+            logger.exception("Detailed error trace:")
 
     def create_floor_plan(self, container=None):
         """Generate floor plan visualization with data binding"""
@@ -871,61 +960,66 @@ class FloorPlan:
                     elif sensor.type == 'mode':
                         mode_value = int(sensor.current_value or 0)
 
-                # Create controls for the thermostat
-                power_switch = ui.switch('Power', value=power_value).classes('mb-4')
-                temp_slider = ui.slider(min=16, max=30, step=0.5, value=temp_value).classes('mb-2')
-                temp_label = ui.label(f'Temperature: {temp_value}°C').classes('text-sm mb-4')
+            # Create power switch
+            power_switch = ui.switch('Power', value=power_value).classes('mb-4')
 
-                # Update temperature label when slider changes
-                def update_temp_label(e):
-                    try:
-                        temp_value = float(e.args)  # Directly use e.args as it contains the temperature value
-                        temp_label.text = f'Temperature: {temp_value:.1f}°C'  # Update the label with the correct value
-                    except (ValueError, TypeError) as error:
-                        logger.error(f'Error updating temperature label: {error}')
-                        temp_label.text = 'Temperature: Error'  # Fallback text in case of error
+            # Position slider
+            temp_slider = ui.slider(min=16, max=30, step=0.5, value=temp_value).classes('mb-2')
+            temp_label = ui.label(f'Temperature: {temp_value}°C').classes('text-sm mb-4')
 
-                temp_slider.on('update:model-value', update_temp_label)
+            # Mode selection
+            mode_options = {0: 'Auto', 1: 'Cool', 2: 'Heat', 3: 'Fan'}  # Mode must be 0 (Auto), 1 (Cool), 2 (Heat), or 3 (Fan)
 
-                # Mode selection
-                mode_options = {0: 'Auto', 1: 'Cool', 2: 'Heat', 3: 'Fan'}
-                mode_select = ui.select(options=mode_options, label='Thermostat Mode').props('outlined options-dense')
-                mode_select.classes('min-w-[200px]')
-                mode_select.on('update:model-value', lambda e: logger.debug(f'Mode changed to: {e}'))
+            mode_select = ui.select(
+                options=mode_options,
+                label='Thermostat Mode'
+            ).props('outlined options-dense')
+            mode_select.classes('min-w-[200px]')
+            mode_select.on('update:model-value', lambda e: logger.debug(f'Mode changed to: {e}'))
 
-                # Apply button and status label
-                apply_button = ui.button('Apply Settings', icon='save').classes('mt-2')
-                status_label = ui.label('').classes('text-sm mt-2')
+            # Update temperature label when slider changes
+            def update_temp_label(e):
+                try:
+                    temp_value = float(e.args)  # Directly use e.args as it contains the temperature value
+                    temp_label.text = f'Temperature: {temp_value:.1f}°C'  # Update the label with the correct value
+                except (ValueError, TypeError) as error:
+                    logger.error(f'Error updating temperature label: {error}')
+                    temp_label.text = 'Temperature: Error'  # Fallback text in case of error
 
-                def apply_settings():
-                    logger.debug(f'Applying thermostat settings - Power: {power_switch.value}, Temp: {temp_slider.value}, Mode: {mode_select.value}')
-                    status_label.text = 'Applying settings...'
-                    status_label.classes('text-blue-500')
+            temp_slider.on('update:model-value', update_temp_label)
 
-                    try:
-                        success = self.simulator.set_thermostat(
-                            room_id=device.room_id,
-                            power=power_switch.value,
-                            temperature=temp_slider.value,
-                            mode=mode_select.value
-                        )
+            # Apply button
+            apply_button = ui.button('Apply Settings', icon='save').classes('mt-2')
+            status_label = ui.label('').classes('text-sm mt-2')
 
-                        if success:
-                            status_label.text = 'Settings applied successfully!'
-                            status_label.classes('text-green-500')
-                            ui.notify('Thermostat settings updated successfully', color='positive')
-                        else:
-                            status_label.text = 'Failed to apply settings!'
-                            status_label.classes('text-red-500')
-                            ui.notify('Failed to update thermostat settings', color='negative')
-                            ui.timer(1.5, dialog.close, once=True)
-                    except Exception as e:
-                        logger.error(f"Error applying thermostat settings: {e}")
-                        status_label.text = f'Error: {str(e)}'
+            # Apply settings function
+            def apply_settings():
+                logger.debug(f'Applying thermostat settings - Power: {power_switch.value}, Temp: {temp_slider.value}, Mode: {mode_select.value}')
+                status_label.text = 'Applying settings...'
+                status_label.classes('text-blue-500')
+
+                try:
+                    success = self.simulator.set_thermostat(
+                        room_id=device.room_id,
+                        power=power_switch.value,
+                        temperature=temp_slider.value,
+                        mode=mode_select.value
+                    )
+
+                    if success:
+                        status_label.text = 'Settings applied successfully!'
+                        status_label.classes('text-green-500')
+                        # Close dialog after short delay
+                        ui.timer(1.5, dialog.close, once=True)
+                    else:
+                        status_label.text = 'Failed to apply settings!'
                         status_label.classes('text-red-500')
-                        ui.notify(f'Error: {str(e)}', color='negative')
+                except Exception as e:
+                    logger.error(f"Error applying thermostat settings: {e}")
+                    status_label.text = f'Error: {str(e)}'
+                    status_label.classes('text-red-500')
 
-                apply_button.on('click', apply_settings)
+            apply_button.on('click', apply_settings)
         except Exception as e:
             logger.error(f"Error creating thermostat controls: {e}")
             ui.label(f'Error creating controls: {str(e)}').classes('text-red-500')
@@ -951,61 +1045,61 @@ class FloorPlan:
                     elif sensor.type == 'mode':
                         mode_value = int(sensor.current_value or 0)
 
-                # Position slider
-                position_slider = ui.slider(min=0, max=100, step=1, value=position_value).classes('mb-2')
-                position_label = ui.label(f'Position: {position_value}%').classes('text-sm mb-4')
+            # Position slider
+            position_slider = ui.slider(min=0, max=100, step=1, value=position_value).classes('mb-2')
+            position_label = ui.label(f'Position: {position_value}%').classes('text-sm mb-4')
 
-                # Mode selection
-                mode_options = {0: 'Manual', 1: 'Auto', 2: 'Scheduled'}  # Mode must be 0 (Manual), 1 (Auto), or 2 (Scheduled)
+            # Mode selection
+            mode_options = {0: 'Manual', 1: 'Auto', 2: 'Scheduled'}  # Mode must be 0 (Manual), 1 (Auto), or 2 (Scheduled)
 
-                mode_select = ui.select(
-                    options=mode_options,
-                    label='Mode'
-                ).props('outlined options-dense')
-                mode_select.classes('min-w-[200px]')
-                mode_select.on('update:model-value', lambda e: logger.debug(f'Mode changed to: {e}'))
+            mode_select = ui.select(
+                options=mode_options,
+                label='Mode'
+            ).props('outlined options-dense')
+            mode_select.classes('min-w-[200px]')
+            mode_select.on('update:model-value', lambda e: logger.debug(f'Mode changed to: {e}'))
 
-                # Update position label when slider changes
-                def update_position_label(e):
-                    try:
-                        position_value = float(e.args)  # Directly use e.args as it contains the position value
-                        position_label.text = f'Position: {position_value}%'  # Update the label with the correct value
-                    except (ValueError, TypeError) as error:
-                        logger.error(f'Error updating position label: {error}')
-                        position_label.text = 'Position: Error'  # Fallback text in case of error
+            # Update position label when slider changes
+            def update_position_label(e):
+                try:
+                    position_value = float(e.args)  # Directly use e.args as it contains the position value
+                    position_label.text = f'Position: {position_value}%'  # Update the label with the correct value
+                except (ValueError, TypeError) as error:
+                    logger.error(f'Error updating position label: {error}')
+                    position_label.text = 'Position: Error'  # Fallback text in case of error
 
-                position_slider.on('update:model-value', update_position_label)
+            position_slider.on('update:model-value', update_position_label)
 
-                # Apply button
-                apply_button = ui.button('Apply Settings', icon='save').classes('mt-2')
-                status_label = ui.label('').classes('text-sm mt-2')
+            # Apply button
+            apply_button = ui.button('Apply Settings', icon='save').classes('mt-2')
+            status_label = ui.label('').classes('text-sm mt-2')
 
-                # Apply settings function
-                def apply_settings():
-                    status_label.text = 'Applying settings...'
-                    status_label.classes('text-blue-500')
+            # Apply settings function
+            def apply_settings():
+                status_label.text = 'Applying settings...'
+                status_label.classes('text-blue-500')
 
-                    try:
-                        success = self.simulator.set_blinds(
-                            room_id=device.room_id,
-                            position=position_slider.value,
-                            mode=mode_select.value
-                        )
+                try:
+                    success = self.simulator.set_blinds(
+                        room_id=device.room_id,
+                        position=position_slider.value,
+                        mode=mode_select.value
+                    )
 
-                        if success:
-                            status_label.text = 'Settings applied successfully!'
-                            status_label.classes('text-green-500')
-                            # Close dialog after short delay
-                            ui.timer(1.5, dialog.close, once=True)
-                        else:
-                            status_label.text = 'Failed to apply settings!'
-                            status_label.classes('text-red-500')
-                    except Exception as e:
-                        logger.error(f"Error applying blinds settings: {e}")
-                        status_label.text = f'Error: {str(e)}'
+                    if success:
+                        status_label.text = 'Settings applied successfully!'
+                        status_label.classes('text-green-500')
+                        # Close dialog after short delay
+                        ui.timer(1.5, dialog.close, once=True)
+                    else:
+                        status_label.text = 'Failed to apply settings!'
                         status_label.classes('text-red-500')
+                except Exception as e:
+                    logger.error(f"Error applying blinds settings: {e}")
+                    status_label.text = f'Error: {str(e)}'
+                    status_label.classes('text-red-500')
 
-                apply_button.on('click', apply_settings)
+            apply_button.on('click', apply_settings)
         except Exception as e:
             logger.error(f"Error creating blinds controls: {e}")
             ui.label(f'Error creating controls: {str(e)}').classes('text-red-500')
@@ -1050,6 +1144,7 @@ class FloorPlan:
 
             # Apply settings function
             def apply_settings():
+                logger.debug(f'Applying irrigation settings - Schedule: {schedule_switch.value}')
                 status_label.text = 'Applying settings...'
                 status_label.classes('text-blue-500')
 

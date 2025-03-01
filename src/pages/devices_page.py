@@ -13,9 +13,11 @@ from src.database import SessionLocal
 class DevicesPage:
     '''This class represents the devices page.'''
 
-    def __init__(self, iot_hub_helper=None):
+    def __init__(self, iot_hub_helper=None, event_system=None, state_manager=None):
         '''Initializes the page'''
         self.iot_hub_helper = iot_hub_helper
+        self.event_system = event_system
+        self.state_manager = state_manager
         logger.info("Initializing DevicesPage")
         self.devices = []
         self.list_items = []

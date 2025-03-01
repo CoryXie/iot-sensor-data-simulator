@@ -31,13 +31,20 @@ from src.utils.socketio_patch import apply_socketio_patches
 # Import the API router (no longer directly used, but kept for reference)
 from src.api.api import api_router
 from fastapi.responses import JSONResponse
+# Import the state manager
+from src.utils.state_manager import StateManager
 
 # Configure logging
 os.makedirs('logs', exist_ok=True)
 logger.add("logs/app.log", rotation="500 MB", level="INFO")
 
 # Create a global event system instance
-event_system = EventSystem()
+event_system = EventSystem.get_instance()
+logger.info("Global EventSystem instance created")
+
+# Create a global state manager instance
+state_manager = StateManager()
+logger.info("Global StateManager instance created")
 
 def create_intro_content():
     """Create modern introduction content"""
@@ -227,7 +234,7 @@ def init():
             with ui.header().style('background-color: #3874c8').classes('z-50'):
                 nav.setup_navigation()
             with ui.column().classes('w-full min-h-screen bg-gray-50'):
-                smart_home_page = SmartHomePage(event_system)
+                smart_home_page = SmartHomePage(event_system, state_manager)
                 smart_home_page.build()
         except Exception as e:
             logger.error(f"Error loading smart home page: {str(e)}")
@@ -242,7 +249,7 @@ def init():
         with ui.header().style('background-color: #3874c8').classes('z-50'):
             nav.setup_navigation()
         with ui.column().classes('w-full min-h-screen bg-gray-50'):
-            containers_page = ContainersPage(iot_hub_helper=iot_hub_helper)
+            containers_page = ContainersPage(iot_hub_helper=iot_hub_helper, event_system=event_system, state_manager=state_manager)
             containers_page.create_content()
 
     @ui.page('/devices')
@@ -252,7 +259,7 @@ def init():
         with ui.header().style('background-color: #3874c8').classes('z-50'):
             nav.setup_navigation()
         with ui.column().classes('w-full min-h-screen bg-gray-50'):
-            devices_page = DevicesPage(iot_hub_helper=iot_hub_helper)
+            devices_page = DevicesPage(iot_hub_helper=iot_hub_helper, event_system=event_system, state_manager=state_manager)
             devices_page.create_content()
 
     @ui.page('/sensors')
@@ -262,7 +269,7 @@ def init():
         with ui.header().style('background-color: #3874c8').classes('z-50'):
             nav.setup_navigation()
         with ui.column().classes('w-full min-h-screen bg-gray-50'):
-            sensors_page = SensorsPage(iot_hub_helper=iot_hub_helper)
+            sensors_page = SensorsPage(iot_hub_helper=iot_hub_helper, event_system=event_system, state_manager=state_manager)
             sensors_page.create_content()
 
     @ui.page('/debug_sensors')

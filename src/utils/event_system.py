@@ -75,18 +75,26 @@ class EventSystem:
     
     def __init__(self):
         """Initialize event system"""
-        # Skip if already initialized
+        # Initialize handlers regardless of initialization state
+        # to avoid race conditions
+        self.handlers = defaultdict(list)
+        self.logger = logger
+        self._lock = Lock()
+        
+        # Skip other initialization if already initialized
         if EventSystem._initialized:
             return
-            
-        self.handlers = defaultdict(list)
+        
+        # Set initialization flag and create other attributes
         EventSystem._initialized = True
-        self.logger = logger
         self._events = []
-        self._lock = Lock()
             
     async def emit(self, event_type: str, data: dict):
         """Emit an event to all registered handlers"""
+        if not hasattr(self, 'handlers'):
+            self.handlers = defaultdict(list)
+            self.logger.warning("Handlers attribute was missing - reinitializing")
+            
         if event_type in self.handlers:
             # Make a copy of the data to avoid modifying the original
             safe_data = data.copy() if isinstance(data, dict) else {"value": data}
@@ -126,6 +134,11 @@ class EventSystem:
         if not handler:
             self.logger.warning(f"Attempted to register None handler for {event_type}")
             return
+            
+        # Ensure handlers attribute exists
+        if not hasattr(self, 'handlers'):
+            self.handlers = defaultdict(list)
+            self.logger.warning("Handlers attribute was missing when registering - reinitializing")
 
         if event_type not in self.handlers:
             self.handlers[event_type] = []
@@ -141,11 +154,23 @@ class EventSystem:
             
     def off(self, event_type: str, handler):
         """Remove an event handler"""
+        # Ensure handlers attribute exists
+        if not hasattr(self, 'handlers'):
+            self.handlers = defaultdict(list)
+            self.logger.warning("Handlers attribute was missing when removing handler - reinitializing")
+            return
+            
         if event_type in self.handlers and handler in self.handlers[event_type]:
             self.handlers[event_type].remove(handler)
             
     def remove_all_handlers(self, event_type: str):
         """Remove all handlers for a specific event type"""
+        # Ensure handlers attribute exists
+        if not hasattr(self, 'handlers'):
+            self.handlers = defaultdict(list)
+            self.logger.warning("Handlers attribute was missing when removing all handlers - reinitializing")
+            return
+            
         if event_type in self.handlers:
             self.handlers[event_type] = []
             self.logger.debug(f"Removed all handlers for event type: {event_type}")

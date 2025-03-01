@@ -50,7 +50,7 @@ class SmartHomeSimulator:
         self.weather_forecast = {}  # Store weather forecast data
         self.broker_address = os.getenv('MQTT_BROKER_ADDRESS', 'localhost')
         self.broker_port = int(os.getenv('MQTT_BROKER_PORT', 1883))
-        self.simulation_interval = 5
+        self.simulation_interval = 2  # Reduced from 5 seconds to 2 seconds for more frequent updates
         
         # Initialize weather service
         self.weather_service = WeatherService()
@@ -1232,7 +1232,7 @@ class SmartHomeSimulator:
                             session.rollback()
                             continue
                     
-                await asyncio.sleep(self.simulation_interval)  # Update every 5 seconds
+                await asyncio.sleep(self.simulation_interval)  # Update every 2 seconds
                 
             except Exception as e:
                 logger.error(f"Error in simulation loop: {e}")

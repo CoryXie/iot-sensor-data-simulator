@@ -14,8 +14,10 @@ from loguru import logger
 class ContainersPage:
     '''This class represents the containers page.'''
 
-    def __init__(self, iot_hub_helper=None):
+    def __init__(self, iot_hub_helper=None, event_system=None, state_manager=None):
         self.iot_hub_helper = iot_hub_helper
+        self.event_system = event_system
+        self.state_manager = state_manager
         logger.info("Initializing ContainersPage")
         self.containers = []
         self.container_templates = []
@@ -27,6 +29,7 @@ class ContainersPage:
         self.active_containers_count = 0
         self.inactive_containers_count = 0
         self.templates_count = 0
+        self.active_scenario = None
 
     def create_page(self):
         """Create the containers page"""
@@ -320,15 +323,43 @@ class ContainersPage:
     def update_stats(self):
         """Update container statistics"""
         try:
-            # Refresh containers list
-            self.containers = Container.get_all()
+            # Use state manager if available, otherwise fall back to direct database query
+            if self.state_manager:
+                logger.info("Using state manager to get active scenario and containers")
+                self.active_scenario = self.state_manager.get_active_scenario()
+                active_containers = self.state_manager.get_active_containers()
+                
+                # Check if we need to refresh full container list
+                if not self.containers:
+                    self.containers = Container.get_all()
+                    logger.info(f"Loaded {len(self.containers)} containers from database")
+                
+                # Update active containers in our list from state manager
+                if active_containers:
+                    for container in self.containers:
+                        # Update is_active status based on state manager
+                        container.is_active = any(ac.id == container.id for ac in active_containers)
+            else:
+                # Get the active scenario from database
+                from src.models.scenario import Scenario
+                with SessionLocal() as session:
+                    self.active_scenario = session.query(Scenario).filter_by(is_active=True).first()
+                
+                # Refresh containers list
+                self.containers = Container.get_all()
             
             # Update counts
             self.containers_count = len(self.containers)
             self.active_containers_count = sum(1 for c in self.containers if c.is_active)
             self.inactive_containers_count = self.containers_count - self.active_containers_count
+            
+            logger.info(f"Container stats updated: total={self.containers_count}, active={self.active_containers_count}, inactive={self.inactive_containers_count}")
+            if self.active_scenario:
+                logger.info(f"Active scenario: {self.active_scenario.name}")
+            else:
+                logger.info("No active scenario")
         except Exception as e:
-            logger.error(f"Error updating stats: {e}")
+            logger.error(f"Error updating stats: {e}", exc_info=True)
 
     def setup_cards_grid(self, active_only=None):
         """Setup the container cards grid
@@ -343,8 +374,16 @@ class ContainersPage:
             
             # Filter containers based on active status if requested
             filtered_containers = []
-            if active_only is not None:
-                filtered_containers = [c for c in self.containers if c.is_active == active_only]
+            if active_only is True:
+                # Only show active containers from the current active scenario
+                if hasattr(self, 'active_scenario') and self.active_scenario:
+                    scenario_id = self.active_scenario.id
+                    filtered_containers = [c for c in self.containers if c.is_active and c.scenario_id == scenario_id]
+                else:
+                    # No active scenario
+                    filtered_containers = []
+            elif active_only is False:
+                filtered_containers = [c for c in self.containers if c.is_active == False]
             else:
                 filtered_containers = self.containers
             
@@ -353,6 +392,8 @@ class ContainersPage:
                     status_msg = 'No active containers available' if active_only else 'No inactive containers available'
                     if active_only is None:
                         status_msg = 'No containers available'
+                    if active_only is True and not (hasattr(self, 'active_scenario') and self.active_scenario):
+                        status_msg = 'No active scenario currently running'
                     ui.label(status_msg).classes('text-gray-500')
                 return
             
@@ -584,24 +625,30 @@ class ContainersPage:
         return self
     
     def refresh(self):
-        """Refresh the container data to reflect the latest state from the database"""
-        self.update_stats()
-        
-        # Query for updated containers
-        fresh_containers = Container.get_all()
-        if not fresh_containers or not self.containers:
-            return
+        """Refresh the containers view"""
+        try:
+            logger.info("Refreshing containers page")
             
-        # Update container states if they've changed
-        for i, container in enumerate(self.containers):
-            # Find matching container in fresh data
-            fresh_container = next((c for c in fresh_containers if c.id == container.id), None)
-            if fresh_container and container.is_active != fresh_container.is_active:
-                # Container status has changed, update our list
-                self.containers[i] = fresh_container
+            # Check state manager first for any changes
+            if self.state_manager:
+                logger.info("Using state manager to refresh containers")
+                # This will update active_scenario and active_containers
+                self.state_manager._refresh_state_if_needed(force=True)
                 
-                # If the container is displayed, update its card
-                for card in self.cards:
-                    if card.container.id == container.id:
-                        card.container = fresh_container
-                        card.update_ui()
+            # Update container statistics
+            self.update_stats()
+            
+            # Clear and rebuild the cards grid for active and inactive containers
+            with ui.tab_panel('Active Containers'):
+                if self.cards_grid:
+                    self.cards_grid.clear()
+                self.setup_cards_grid(active_only=True)
+                
+            with ui.tab_panel('Inactive Containers'):
+                if self.cards_grid:
+                    self.cards_grid.clear()
+                self.setup_cards_grid(active_only=False)
+            
+            logger.info("Containers page refreshed successfully")
+        except Exception as e:
+            logger.error(f"Error refreshing containers page: {e}", exc_info=True)
