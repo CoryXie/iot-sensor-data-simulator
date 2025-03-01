@@ -96,6 +96,10 @@ class WeatherImpactFactors:
 class SmartHomePage:
     """Smart home monitoring and control page"""
     
+    # Class-level task tracking (not used for active refreshes but kept for consistency)
+    _class_ui_refresh_task = None
+    _refresh_task_lock = asyncio.Lock()
+    
     def __init__(self, event_system, state_manager=None):
         """Initialize Smart Home Page"""
         logger.info("Initializing SmartHomePage")
@@ -203,44 +207,16 @@ class SmartHomePage:
         self.device_controls = None
         self.locations = {}
         
-        # Register event handlers
-        self.setup_event_handlers()
-        
         # Initialize weather service if not already done
         if not hasattr(self, 'weather_service') or self.weather_service is None:
             self.weather_service = WeatherService()
 
-        # UI update interval tracking variables
-        self.last_ui_update = 0  # Track when we last updated the UI
-        self.ui_update_interval = 0.5  # Only update UI every 0.5 seconds max
-
-    def setup_event_handlers(self):
-        """Set up event handlers for real-time updates"""
-        # Register handlers just for data storage
-        self.event_system.on('sensor_update', self.handle_sensor_update)
-        self.event_system.on('device_update', self.handle_device_update)
-        
-        # Start background UI refresh task
-        self._start_ui_refresh_task()
-        
-    def _start_ui_refresh_task(self):
-        """Start a task to periodically refresh the UI to ensure it's always up-to-date"""
-        async def ui_refresh_loop():
-            while True:
-                try:
-                    # Force a UI refresh every few seconds
-                    await asyncio.sleep(2.0)  # Update every 2 seconds
-                    await self.update_ui()
-                except Exception as e:
-                    logger.error(f"Error in UI refresh loop: {e}")
-                    await asyncio.sleep(5.0)  # Wait longer if there was an error
-        
-        # Create the task
-        asyncio.create_task(ui_refresh_loop())
-        logger.info("Started periodic UI refresh task")
-
     async def handle_sensor_update(self, data):
-        """Store sensor update data without updating UI"""
+        """Store sensor update data without updating UI
+        
+        This method only receives data to store. The FloorPlan component
+        handles the real-time UI updates directly via its own event handlers.
+        """
         try:
             sensor_id = data.get('sensor_id') or data.get('id')
             if not sensor_id:
@@ -260,9 +236,13 @@ class SmartHomePage:
             logger.debug(f'Stored sensor data: ID={sensor_id}')
         except Exception as e:
             logger.error(f"Error storing sensor update data: {e}")
-        
+            
     async def handle_device_update(self, data):
-        """Store device update data without updating UI"""
+        """Store device update data without updating UI
+        
+        This method only receives data to store. The FloorPlan component
+        handles the real-time UI updates directly via its own event handlers.
+        """
         try:
             # Extract device ID
             device_id = data.get('device_id')
@@ -280,66 +260,6 @@ class SmartHomePage:
             logger.debug(f'Stored device data: ID={device_id}')
         except Exception as e:
             logger.error(f'Error storing device update data: {e}')
-
-    async def update_ui(self):
-        """Update the UI with latest sensor and device data"""
-        try:
-            # Rate limit UI updates to avoid overwhelming the UI
-            current_time = time_module.time()
-            if (current_time - self.last_ui_update) < self.ui_update_interval:
-                # Skip this update as we updated recently
-                return
-                
-            self.last_ui_update = current_time
-            
-            # Group sensors by location and device type
-            locations = {}
-            for sensor_id, sensor_data in self.sensors.items():
-                location = sensor_data['location']
-                device_type = sensor_data['device_type']
-                
-                if location not in locations:
-                    locations[location] = {}
-                if device_type not in locations[location]:
-                    locations[location][device_type] = []
-                    
-                locations[location][device_type].append({
-                    'sensor_id': sensor_id,
-                    'value': sensor_data['value'],
-                    'unit': sensor_data['unit'],
-                    'device_name': sensor_data['device_name'],
-                    'timestamp': sensor_data['timestamp']
-                })
-            
-            # Update the UI components
-            for location, device_types in locations.items():
-                for device_type, sensors in device_types.items():
-                    await self.update_location_section(location, device_type, sensors)
-                    
-        except Exception as e:
-            logger.error(f"Error updating UI: {str(e)}")
-            
-    async def update_location_section(self, location, device_type, sensors):
-        """Update a specific location section in the UI"""
-        try:
-            # Format sensor data for display
-            sensor_displays = []
-            for sensor in sensors:
-                value_str = f"{sensor['value']:.1f}" if isinstance(sensor['value'], float) else str(sensor['value'])
-                sensor_displays.append(f"{sensor['device_name']}: {value_str}{sensor['unit']}")
-                
-            # Update the UI elements
-            section_id = f"{location}-{device_type}"
-            await self.event_system.emit('ui_update', {
-                'section_id': section_id,
-                'location': location.replace('_', ' ').title(),
-                'device_type': device_type.replace('_', ' ').title(),
-                'sensors': sensor_displays,
-                'timestamp': datetime.now().isoformat()
-            })
-            
-        except Exception as e:
-            logger.error(f"Error updating location section: {str(e)}")
 
     def _load_initial_data(self):
         """Load initial data from database and templates"""
@@ -1716,19 +1636,3 @@ class SmartHomePage:
             self._build_scenario_controls()
             self._build_location_controls()
             self._build_floor_plan()
-
-
-    # Asynchronously update the floor plan view with the new sensor reading using the location provided in the sensor data.
-    async def update_floorplan(sensor_data):
-        """Asynchronously update the floor plan view with the new sensor reading using the location provided in the sensor data."""
-        sensor_id = sensor_data.get('id')
-        reading = sensor_data.get('value')
-        room = sensor_data.get('location')
-        if room:
-            # Normalize room type before updating
-            normalized_room = room.lower().replace(' ', '_')
-            # Update the UI element corresponding to the room
-            print(f"FloorPlan Update - Room: {normalized_room}, Sensor: {sensor_id}, Reading: {reading}")
-        else:
-            print(f"Sensor update missing location info: {sensor_data}")
-        await asyncio.sleep(0)  # Dummy await to ensure this is a coroutine

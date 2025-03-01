@@ -18,6 +18,10 @@ import time  # Add time module for UI refresh timing
 from src.utils.smart_home_simulator import SmartHomeSimulator
 
 class FloorPlan:
+    # Class-level task tracking
+    _class_ui_refresh_task = None
+    _refresh_task_lock = asyncio.Lock()
+    
     def __init__(self, event_system: EventSystem = None):
         """Initialize FloorPlan component"""
         self.event_system = event_system or EventSystem()
@@ -35,16 +39,120 @@ class FloorPlan:
         self.device_control_dialogs = {}  # Store device control dialogs
         self.simulator = SmartHomeSimulator.get_instance(self.event_system)  # Get simulator instance
         self.last_ui_refresh = 0  # Track when we last refreshed the UI
-        self.ui_refresh_interval = 1.0  # Refresh UI at most once per second
-        self._setup_event_handlers()
+        self.ui_refresh_interval = 5.0  # Increased to 5 seconds to reduce refresh frequency
         
         # Start the update processing task
         ui.timer(0.5, self._process_updates, active=True)
+        
+        # Register direct event handlers for real-time updates
+        self.setup_event_handlers()
 
     def _normalize_room_type(self, room_type: str) -> str:
         """Normalize room type for consistent comparison"""
-        return room_type.lower().strip().replace(" ", "_")
-
+        return room_type.lower().replace(' ', '_')
+        
+    def setup_event_handlers(self):
+        """Set up event handlers to directly call our public methods"""
+        try:
+            # Register the direct event handlers for real-time updates
+            self.event_system.on('sensor_update', self._handle_sensor_update_event)
+            self.event_system.on('device_update', self._handle_device_update_event)
+            
+            # Start UI refresh task for periodic updates
+            self._start_ui_refresh_task()
+            
+            logger.info("FloorPlan event handlers registered")
+        except Exception as e:
+            logger.error(f"Error setting up FloorPlan event handlers: {e}")
+    
+    def _start_ui_refresh_task(self):
+        """Start a task to periodically refresh the UI to ensure it's always up-to-date"""
+        async def ui_refresh_loop():
+            instance_id = id(self)
+            logger.debug(f"FloorPlan[{instance_id}]: UI refresh loop started")
+            while True:
+                try:
+                    # Sleep at the beginning to prevent immediate and frequent refreshes
+                    await asyncio.sleep(self.ui_refresh_interval)
+                    # Only do a refresh if we haven't updated recently
+                    current_time = time.time()
+                    if (current_time - self.last_ui_refresh) >= self.ui_refresh_interval:
+                        self.last_ui_refresh = current_time
+                        # Just call ui.update() to refresh the entire UI
+                        ui.update()
+                        logger.debug(f"FloorPlan[{instance_id}]: Performed periodic UI refresh")
+                except Exception as e:
+                    logger.error(f"FloorPlan[{instance_id}]: Error in UI refresh loop: {e}")
+                    await asyncio.sleep(5.0)  # Wait longer if there was an error
+        
+        async def start_refresh_task():
+            # Acquire the lock to ensure thread-safe creation/cancellation of tasks
+            async with FloorPlan._refresh_task_lock:
+                # Cancel existing class-level task if it exists
+                if FloorPlan._class_ui_refresh_task is not None:
+                    logger.info(f"FloorPlan[{id(self)}]: Cancelling existing UI refresh task")
+                    FloorPlan._class_ui_refresh_task.cancel()
+                    try:
+                        # Wait for task to be properly cancelled
+                        await asyncio.sleep(0.1)
+                    except:
+                        pass
+                
+                # Create a new refresh task
+                FloorPlan._class_ui_refresh_task = asyncio.create_task(ui_refresh_loop())
+                logger.info(f"FloorPlan[{id(self)}]: Started new periodic UI refresh task")
+        
+        # Schedule the task creation
+        asyncio.create_task(start_refresh_task())
+    
+    async def _handle_sensor_update_event(self, data):
+        """Event handler that calls the public sensor update method"""
+        try:
+            sensor_id = data.get('sensor_id') or data.get('id')
+            device_id = data.get('device_id')
+            value = data.get('value')
+            unit = data.get('unit', '')
+            
+            if all([sensor_id, device_id, value is not None]):
+                # Also store the data in our sensor states for later reference
+                self.sensor_states[sensor_id] = {
+                    'value': value,
+                    'unit': unit,
+                    'device_id': device_id,
+                    'timestamp': datetime.now().isoformat()
+                }
+                
+                # Update the UI directly
+                await self.update_sensor_value(sensor_id, device_id, value, unit)
+        except Exception as e:
+            logger.error(f"Error handling sensor update event: {e}")
+    
+    async def _handle_device_update_event(self, data):
+        """Event handler that calls the public device counter update method"""
+        try:
+            device_id = data.get('device_id')
+            update_counter = data.get('update_counter', 0)
+            status = data.get('status', None)
+            
+            if device_id is not None:
+                # Store the device state for later reference
+                self.device_states[device_id] = {
+                    'name': data.get('name', ''),
+                    'type': data.get('type', ''),
+                    'location': data.get('location', 'Unknown'),
+                    'update_counter': update_counter,
+                    'status': status
+                }
+                
+                # Update the counter badge
+                await self.update_device_counter(device_id, update_counter)
+                
+                # Also update status if provided
+                if status is not None:
+                    self.update_device_status(device_id, status)
+        except Exception as e:
+            logger.error(f"Error handling device update event: {e}")
+            
     def _get_default_value(self, sensor_type: str) -> float:
         """Get default value for a sensor type"""
         defaults = {
@@ -392,7 +500,7 @@ class FloorPlan:
                                         ui.icon(icon).classes('text-primary text-xl min-w-[24px]')
                                         
                                         # Name with flex-grow to take available space
-                                        ui.label(sensor_name).classes('text-sm text-gray-600 flex-grow truncate')
+                                        ui.label(sensor_name).classes('text-sm text-gray-600 flex-grow')
                                         
                                         # Value and unit right-aligned
                                         value_label = ui.label(formatted_value)
@@ -502,49 +610,10 @@ class FloorPlan:
         except Exception as e:
             logger.error(f"Error handling MQTT update: {str(e)}") 
 
-    def _setup_event_handlers(self):
-        """Set up event handlers for sensor updates"""
-        try:
-            # First remove any existing handlers
-            self.event_system.remove_all_handlers('device_update')
-            self.event_system.remove_all_handlers('sensor_update')
-            
-            # Register our handlers
-            self.event_system.on('device_update', self._handle_device_update)
-            self.event_system.on('sensor_update', self._handle_sensor_update)
-            
-            # Start periodic UI refresh task
-            self._start_ui_refresh_task()
-            
-            logger.info("Event handlers set up successfully")
-        except Exception as e:
-            logger.error(f"Error setting up event handlers: {e}")
-            
-    def _start_ui_refresh_task(self):
-        """Start a task to periodically refresh the UI"""
-        async def ui_refresh_loop():
-            while True:
-                try:
-                    # Check if enough time has passed since last refresh
-                    current_time = time.time()
-                    if (current_time - self.last_ui_refresh) >= self.ui_refresh_interval:
-                        # Perform a full UI refresh
-                        ui.update()
-                        self.last_ui_refresh = current_time
-                        logger.debug("Performed periodic UI refresh")
-                except Exception as e:
-                    logger.error(f"Error in UI refresh loop: {e}")
-                
-                # Sleep for a short interval to avoid CPU overuse
-                await asyncio.sleep(1.0)  # Use a longer interval here to reduce conflicts with direct updates
-        
-        # Schedule the UI refresh task
-        asyncio.create_task(ui_refresh_loop())
-        logger.info("Started periodic UI refresh task")
-
     async def _handle_device_update(self, data):
         """Handle device update events using data binding"""
         try:
+            logger.debug(f"Device update received: {data}")
             device_id = data.get('device_id')
             device_name = data.get('name', '')
             updates = data.get('update_counter', 0)
@@ -570,21 +639,119 @@ class FloorPlan:
                 logger.error(f"Room {room_type} not found in room elements")
                 return
                 
-            # Update the counter badge with the value from the simulator
-            if device_id in self.device_elements and 'counter' in self.device_elements[device_id]:
-                counter_badge = self.device_elements[device_id]['counter']
-                counter_badge.text = str(updates)
-                # Force immediate update for this element
-                ui.update(counter_badge)
-                logger.debug(f"Updated counter badge for device {device_id} to {updates}")
+            # Update device counter through the public method
+            await self.update_device_counter(device_id, updates)
         except Exception as e:
             logger.error(f"Error in device update handler: {str(e)}")
 
+    async def _handle_sensor_update(self, data):
+        """Handle sensor update events using data binding"""
+        try:
+            # Log more details about the update
+            logger.debug(f"Sensor update received: {data}")
+            
+            # Extract sensor data - handle both direct sensor updates and device updates
+            sensor_id = data.get('sensor_id')  # From device update
+            if not sensor_id:
+                sensor_id = data.get('id')  # From direct sensor update
+            sensor_name = data.get('name')
+                
+            device_id = data.get('device_id')
+            new_value = data.get('value')
+            unit = data.get('unit', '')
+            
+            if not all([sensor_id, device_id, new_value is not None]):
+                logger.debug(f"Skipping sensor update due to missing data: {data}")
+                return
+            
+            # Update sensor value through the public method
+            await self.update_sensor_value(sensor_id, device_id, new_value, unit)
+        except Exception as e:
+            logger.error(f"Error handling sensor update: {str(e)}")
+            logger.debug(f"Problematic event data: {data}")
+
+    async def update_device_counter(self, device_id, update_counter):
+        """Public method to update a device's counter badge
+        
+        Args:
+            device_id: The ID of the device to update
+            update_counter: The new counter value to display
+        """
+        try:
+            logger.debug(f"Updating counter for device {device_id} to {update_counter}")
+            
+            # Update the counter badge with the value from the simulator
+            if device_id in self.device_elements and 'counter' in self.device_elements[device_id]:
+                counter_badge = self.device_elements[device_id]['counter']
+                counter_badge.text = str(update_counter)
+                # Force immediate update for this element
+                ui.update(counter_badge)
+                # Record when we last updated the UI
+                self.last_ui_refresh = time.time()
+                logger.debug(f"Updated counter badge for device {device_id} to {update_counter}")
+            else:
+                logger.debug(f"No counter badge found for device {device_id}")
+        except Exception as e:
+            logger.error(f"Error updating device counter: {str(e)}")
+
+    async def update_sensor_value(self, sensor_id, device_id, new_value, unit=''):
+        """Public method to update a sensor's value display
+        
+        Args:
+            sensor_id: The ID of the sensor to update
+            device_id: The ID of the device that contains the sensor
+            new_value: The new sensor value
+            unit: The unit of measurement (optional)
+        """
+        try:
+            logger.debug(f"Updating sensor {sensor_id} value to {new_value} {unit}")
+            
+            # Find the sensor element and its container
+            device_elements = self.device_elements.get(device_id, {})
+            sensor_elements = device_elements.get('sensors', {})
+            sensor_label = sensor_elements.get(sensor_id)
+            container = device_elements.get('container')
+            
+            if sensor_label and container:
+                try:
+                    # Format the value nicely
+                    formatted_value = f"{new_value:.2f}" if isinstance(new_value, (int, float)) else str(new_value)
+                    formatted_value = f"{formatted_value} {unit}".strip()
+                    
+                    # Update the label text directly - avoid batching for real-time responsiveness
+                    sensor_label.text = formatted_value
+                    
+                    # Force immediate update for this element to ensure real-time display
+                    ui.update(sensor_label)
+                    
+                    # Record when we last updated the UI
+                    self.last_ui_refresh = time.time()
+                    
+                    logger.debug(f"Updated sensor {sensor_id} to {formatted_value}")
+                except Exception as e:
+                    logger.error(f"Error updating sensor label: {str(e)}")
+            else:
+                if not sensor_label:
+                    logger.debug(f"No UI element found for sensor {sensor_id} in device {device_id}")
+                if not container:
+                    logger.debug(f"No container found for device {device_id}")
+        except Exception as e:
+            logger.error(f"Error updating sensor value: {str(e)}")
+
     def update_device_status(self, device_id: int, status: str):
+        """Update the status display for a device
+        
+        Args:
+            device_id: The ID of the device to update
+            status: The new status string to display
+        """
         if device_id in self.device_labels:
             current_text = self.device_labels[device_id].text
             new_text = f"{current_text.split(':')[0]}: {status}"
             self.device_labels[device_id].set_text(new_text)
+            logger.debug(f"Updated device {device_id} status to {status}")
+        else:
+            logger.debug(f"No label found for device {device_id}")
 
     async def _recreate_display(self, sensor_id):
         """Recreate display for sensor"""
@@ -640,56 +807,6 @@ class FloorPlan:
             
         except Exception as e:
             logger.error(f"Error in batch update: {str(e)}")
-
-    async def _handle_sensor_update(self, data):
-        """Handle sensor update events using data binding"""
-        try:
-            # Log more details about the update
-            logger.debug(f"Sensor update received: {data}")
-            
-            # Extract sensor data - handle both direct sensor updates and device updates
-            sensor_id = data.get('sensor_id')  # From device update
-            if not sensor_id:
-                sensor_id = data.get('id')  # From direct sensor update
-            sensor_name = data.get('name')
-                
-            device_id = data.get('device_id')
-            new_value = data.get('value')
-            unit = data.get('unit', '')
-            
-            if not all([sensor_id, device_id, new_value is not None]):
-                logger.debug(f"Skipping sensor update due to missing data: {data}")
-                return
-                
-            # Find the sensor element and its container
-            device_elements = self.device_elements.get(device_id, {})
-            sensor_elements = device_elements.get('sensors', {})
-            sensor_label = sensor_elements.get(sensor_id)
-            container = device_elements.get('container')
-            
-            if sensor_label and container:
-                try:
-                    # Format the value nicely
-                    formatted_value = f"{new_value:.2f}" if isinstance(new_value, (int, float)) else str(new_value)
-                    formatted_value = f"{formatted_value} {unit}".strip()
-                    
-                    # Update the label text directly - avoid batching for real-time responsiveness
-                    sensor_label.text = formatted_value
-                    
-                    # Force immediate update for this element to ensure real-time display
-                    ui.update(sensor_label)
-                    
-                    logger.debug(f"Updated sensor {sensor_id} to {formatted_value}")
-                except Exception as e:
-                    logger.error(f"Error updating sensor label: {str(e)}")
-            else:
-                if not sensor_label:
-                    logger.debug(f"No UI element found for sensor {sensor_id} in device {device_id}")
-                if not container:
-                    logger.debug(f"No container found for device {device_id}")
-        except Exception as e:
-            logger.error(f"Error handling sensor update: {str(e)}")
-            logger.debug(f"Problematic event data: {data}")
 
     async def _process_updates(self):
         """Process all pending sensor updates"""
