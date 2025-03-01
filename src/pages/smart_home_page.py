@@ -107,7 +107,7 @@ class SmartHomePage:
         # Store components and state
         self.event_system = event_system
         self.state_manager = state_manager
-        # Create FloorPlan with our event system instance, not creating a new one
+        # Get the FloorPlan singleton instance with our event system
         self.floor_plan = FloorPlan(self.event_system)
         self.scenario_options = []
         self.scenarios = []
@@ -371,54 +371,6 @@ class SmartHomePage:
         except Exception as e:
             logger.error(f"Error updating UI for active scenario: {e}")
             logger.exception("Detailed error trace:")
-
-    async def _update_smart_home(self):
-        """Update smart home visualization based on current state"""
-        try:
-            logger.info("Starting smart home visualization update")
-            rooms_data = defaultdict(list)
-            
-            with db_session() as session:
-                containers = session.query(Container).options(
-                    joinedload(Container.devices)
-                    .joinedload(Device.sensors)
-                ).all()
-                
-                for container in containers:
-                    if container.location:
-                        # Get actual room type from container's location
-                        room = session.query(Room).filter_by(name=container.location).first()
-                        if room:
-                            room_type = room.room_type.lower()
-                            for device in container.devices:
-                                device_data = {
-                                    'name': device.name,
-                                    'type': device.type,
-                                    'sensors': [
-                                        {
-                                            'id': sensor.id,
-                                            'name': sensor.name,
-                                            'type': sensor.type,
-                                            'value': sensor.current_value,  # This will be mapped to 'value' in UI
-                                            'unit': sensor.unit,
-                                            'room_type': room_type,
-                                            'device': device.name,
-                                            'location': container.location
-                                        }
-                                        for sensor in device.sensors
-                                    ]
-                                }
-                                rooms_data[room_type].append(device_data)
-            
-            logger.debug(f"Room data structure: {rooms_data}")  # Add debug logging
-            logger.info(f"Updating {len(rooms_data)} rooms with device data")
-            await self.floor_plan.update_sensor_values(rooms_data)
-            logger.info("Smart home visualization updated successfully")
-            
-        except Exception as e:
-            logger.error(f"Error updating smart home visualization: {e}")
-            logger.exception("Detailed error trace:")
-            ui.notify("Error updating smart home visualization", type='negative')
 
     def _initialize_simulation(self):
         """Start simulation after all handlers are registered"""
