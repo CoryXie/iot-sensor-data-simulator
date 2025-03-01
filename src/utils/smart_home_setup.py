@@ -281,13 +281,24 @@ class SmartHomeSetup:
             
             # Add template scenarios
             for name, template in SCENARIO_TEMPLATES.items():
+                # Calculate total device count across all containers
+                device_count = sum(len(container.get('devices', [])) for container in template.get('containers', []))
+                
+                # Calculate total sensor count for all devices across all containers
+                sensor_count = 0
+                for container in template.get('containers', []):
+                    for device_info in container.get('devices', []):
+                        device_type = device_info.get('device_type')
+                        if device_type in DEVICE_TEMPLATES:
+                            sensor_count += len(DEVICE_TEMPLATES[device_type]['sensors'])
+                
                 scenarios.append({
                     'id': None,
                     'name': name,
                     'description': template['description'],
                     'type': template['type'],
-                    'device_count': len(template['devices']),
-                    'sensor_count': sum(len(DEVICE_TEMPLATES[d]['sensors']) for d in template['devices']),
+                    'device_count': device_count,
+                    'sensor_count': sensor_count,
                     'is_template': True,
                     'is_active': False
                 })

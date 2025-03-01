@@ -291,12 +291,12 @@ class SmartHomePage:
                 self.active_container = None
                 
                 # Update UI components if they exist
-                if self.scenario_select:
+                if hasattr(self, 'scenario_select') and self.scenario_select is not None:
                     self.scenario_select.options = self.scenario_options
                     self.scenario_select.value = None  # No default selection
                     self.scenario_select.update()
                 
-                # Update button state if it exists
+                # Update button state if it exists, but safely
                 self._update_toggle_button_state()
                 
                 logger.debug(f"Loaded {len(self.scenarios)} scenarios")
@@ -351,405 +351,7 @@ class SmartHomePage:
         except Exception as e:
             logger.error(f"Error updating smart home visualization: {e}")
             logger.exception("Detailed error trace:")
-
-    def _change_scenario(self, scenario_name: str):
-        """Handle scenario selection change"""
-        try:
-            # First stop any currently active scenario
-            if self.selected_scenario and self.selected_scenario.is_active:
-                self._stop_scenario()
-            
-            with SessionLocal() as session:
-                # Load the selected scenario with its containers
-                scenario = session.query(Scenario).options(
-                    joinedload(Scenario.containers)
-                ).filter_by(name=scenario_name).first()
-                
-                if scenario:
-                    self.selected_scenario = scenario
-                    # Reset active container since we're selecting a new scenario
-                    self.active_container = None
-                    logger.info(f"Selected new scenario: {scenario_name}")
-                    
-                    # Update button state to show 'Start Scenario'
-                    self._update_toggle_button_state()
-                else:
-                    logger.warning(f"Scenario not found: {scenario_name}")
-                    ui.notify("Scenario not found", type='warning')
-                
-        except Exception as e:
-            logger.error(f"Error in scenario selection: {str(e)}", exc_info=True)
-            ui.notify("Error selecting scenario", type='negative')
-
-    def _update_room_data(self, room_type: str, devices: list):
-        """Update room visualization with latest device data"""
-        try:
-            formatted_devices = []
-            for device in devices:
-                device_info = {
-                    'name': device['name'],
-                    'type': device['type'],
-                    'sensors': [{
-                        'name': s['name'],
-                        'value': s['value'],
-                        'unit': s['unit']
-                    } for s in device['sensors']]
-                }
-                formatted_devices.append(device_info)
-            
-            logger.debug(f"Updating room {room_type} with {len(formatted_devices)} devices")
-
-            # Normalize room type to match floor plan's format
-            normalized_room_type = room_type.lower().replace(' ', '_')
-            self.floor_plan.update_room_data(normalized_room_type, formatted_devices)
-        except Exception as e:
-            logger.error(f"Error updating room data: {str(e)}")
-
-    def build(self):
-        """Build the smart home page UI"""
-        with ui.column().classes('w-full max-w-6xl mx-auto p-4 gap-4'):
-            self._build_scenario_controls()
-            self._build_location_controls()
-            self._build_floor_plan()
-
-    def _build_scenario_controls(self):
-        """Build scenario selection and control section"""
-        with ui.card().classes('w-full p-4'):
-            with ui.row().classes('items-center gap-4'):
-                # Create scenario select with increased width
-                logger.debug(f"Building scenario select with options: {self.scenario_options}")
-                
-                self.scenario_select = ui.select(
-                    options=self.scenario_options,
-                    label="Select Scenario"
-                ).props('outlined options-dense')
-                self.scenario_select.classes('min-w-[300px] md:min-w-[400px]')
-                self.scenario_select.on('update:model-value', self._handle_scenario_select_change)
-                logger.debug("Scenario select component built")
-                
-                # Create toggle button
-                self.scenario_toggle = ui.button(
-                    'Start Scenario',
-                    on_click=self._toggle_scenario
-                ).classes('bg-blue-500 text-white')
-
-    def _build_location_controls(self):
-        """Build location and environmental controls section"""
-        with ui.card().classes('w-full p-4'):
-            with ui.column().classes('w-full gap-4'):
-                # Location Type Selection
-                with ui.row().classes('items-start gap-4 flex-wrap'):
-                    # Create options list for location type select
-                    location_type_options = [t.value.title() for t in LocationType]
-                    
-                    with ui.column().classes('flex-1'):
-                        self.location_type_select = ui.select(
-                            label='Location Type',
-                            options=location_type_options,
-                            value=location_type_options[0],
-                        ).props('outlined dense').classes('w-64')  # Wider select
-                        self.location_type_select.on('update:model-value', 
-                                                   lambda e: self._handle_location_type_change(e))
-                
-                # Location Inputs Container
-                with ui.row().classes('items-start gap-4 flex-wrap'):
-                    # City search
-                    with ui.column().classes('flex-1').bind_visibility_from(
-                        self.location_type_select, 'value',
-                        lambda v: v.lower() == LocationType.CITY.value):
-                        
-                        # Create initial options from popular cities
-                        self.location_search = ui.select(
-                            label='Search City',
-                            options=[],
-                            with_input=True,
-                        ).props('outlined dense').classes('w-96')  # Wider select
-                        
-                        # Initialize search results and set initial options
-                        self.search_results = []
-                        self._update_location_options(self.popular_cities)
-                        
-                        self.location_search.on('filter', self._handle_location_search)
-                        self.location_search.on('update:model-value', self._handle_location_select)
-
-                    # Lat/Lon inputs
-                    with ui.column().classes('flex-1').bind_visibility_from(
-                        self.location_type_select, 'value',
-                        lambda v: v.lower() == LocationType.LATLON.value):
-                        with ui.row().classes('gap-4'):
-                            self.latitude_input = ui.number(
-                                label='Latitude',
-                                min=-90,
-                                max=90,
-                                step=0.000001,
-                                format='%.6f'
-                            ).props('outlined dense').classes('w-48')
-                            
-                            self.longitude_input = ui.number(
-                                label='Longitude',
-                                min=-180,
-                                max=180,
-                                step=0.000001,
-                                format='%.6f'
-                            ).props('outlined dense').classes('w-48')
-                    
-                    # Postcode input
-                    with ui.column().classes('flex-1').bind_visibility_from(
-                        self.location_type_select, 'value',
-                        lambda v: v.lower() == LocationType.POSTCODE.value):
-                        
-                        self.postcode_input = ui.input(
-                            label='Postal Code'
-                        ).props('outlined dense').classes('w-48')
-                    
-                    # IATA input
-                    with ui.column().classes('flex-1').bind_visibility_from(
-                        self.location_type_select, 'value',
-                        lambda v: v.lower() == LocationType.IATA.value):
-                        
-                        self.iata_input = ui.input(
-                            label='IATA Code'
-                        ).props('outlined dense').classes('w-48')
-                    
-                    # METAR input
-                    with ui.column().classes('flex-1').bind_visibility_from(
-                        self.location_type_select, 'value',
-                        lambda v: v.lower() == LocationType.METAR.value):
-                        
-                        self.metar_input = ui.input(
-                            label='METAR Code'
-                        ).props('outlined dense').classes('w-48')
-                    
-                    # IP input
-                    with ui.column().classes('flex-1').bind_visibility_from(
-                        self.location_type_select, 'value',
-                        lambda v: v.lower() == LocationType.IP.value):
-                        
-                        self.ip_input = ui.input(
-                            label='IP Address (leave empty for auto)'
-                        ).props('outlined dense').classes('w-64')
-                    
-                    # Weather result card
-                    self.weather_result_card = ui.card().classes('w-full p-4 mt-4')
-                
-                # Remove the Time and Weather Controls section
-                # Keep related variables for compatibility with other code
-                self.time_input = None  
-                self.weather_select = None
-                # Set defaults for the variables that would have been set by these controls
-                self.current_weather = WeatherCondition.SUNNY
-                self.include_aqi = True
-
-    def _build_floor_plan(self):
-        """Build floor plan visualization section"""
-        with ui.card().classes('w-full p-4'):
-            ui.label('Smart Home Floor Plan').classes('text-h6 mb-4')
-            # Create the floor plan with normalized room types
-            self.floor_plan.create_floor_plan()
-
-    def _show_location_input(self, input_type: str):
-        """Show the selected location input and hide others"""
-        input_cards = {
-            'city': self.city_card,
-            'latlon': self.latlon_card,
-        }
-        
-        for card_type, card in input_cards.items():
-            if card_type == input_type:
-                card.remove_class('hidden')
-            else:
-                card.add_class('hidden')
-
-    def _handle_location_type_change(self, location_type: str):
-        """Handle location type change with validation"""
-        try:
-            # Convert back to enum value for internal use
-            location_type = location_type.upper()
-            self._show_location_input(location_type)
-            
-        except Exception as e:
-            logger.error(f"Error handling location type change: {e}")
-            ui.notify("Error changing location type", type='negative')
-
-    def _handle_scenario_select_change(self, event):
-        """Handle raw selection change event from UI"""
-        try:
-            logger.debug(f"Received selection event: {event}")
-            
-            # Extract scenario name from event
-            if hasattr(event, 'args') and isinstance(event.args, dict):
-                scenario_name = event.args.get('label')
-            else:
-                scenario_name = event
-                
-            logger.debug(f"Extracted scenario name: {scenario_name}")
-            self._update_scenario_selection(scenario_name)
-            
-        except Exception as e:
-            logger.error(f"Error handling scenario selection event: {e}", exc_info=True)
-            ui.notify("Error selecting scenario", type='negative')
-
-    def _update_scenario_selection(self, scenario_name: str):
-        """Handle scenario selection without auto-starting"""
-        try:
-            if not scenario_name:  # Handle empty selection
-                logger.info("Empty scenario selection - clearing current selection")
-                self.selected_scenario = None
-                self._update_toggle_button_state()
-                return
-
-            logger.debug(f"Processing scenario selection. Name: {scenario_name}")
-            
-            with SessionLocal() as session:
-                # Load the selected scenario with its containers
-                logger.debug(f"Querying database for scenario: {scenario_name}")
-                scenario = session.query(Scenario).options(
-                    joinedload(Scenario.containers)
-                ).filter_by(name=scenario_name).first()
-                
-                if scenario:
-                    logger.info(f"Found scenario in database: {scenario.name} (id: {scenario.id})")
-                    self.selected_scenario = scenario
-                    # Don't set active container until scenario is started
-                    self.active_container = None
-                    logger.debug(f"Selected scenario containers: {[c.name for c in scenario.containers]}")
-                    
-                    # Update button state to show 'Start Scenario'
-                    self._update_toggle_button_state()
-                else:
-                    logger.warning(f"Scenario not found in database: {scenario_name}")
-                    ui.notify("Scenario not found", type='warning')
-                
-        except Exception as e:
-            logger.error(f"Error in scenario selection: {e}", exc_info=True)
-            ui.notify("Error selecting scenario", type='negative')
-
-    def _toggle_scenario(self):
-        """Toggle scenario activation"""
-        logger.debug(f"Toggle scenario called. Selected scenario: {self.selected_scenario.name if self.selected_scenario else 'None'}")
-        
-        if not self.selected_scenario:
-            logger.warning("Attempt to toggle scenario without selection")
-            ui.notify("Please select a scenario first", type='warning')
-            return
-        
-        try:
-            logger.debug(f"Current scenario state - Active: {self.selected_scenario.is_active}")
-            if self.selected_scenario.is_active:
-                self._stop_scenario()
-            else:
-                self._start_scenario()
-            
-            self._update_toggle_button_state()
-        except Exception as e:
-            logger.error(f"Scenario toggle failed: {e}", exc_info=True)
-            ui.notify("Scenario operation failed", type='negative')
-
-    def _update_toggle_button_state(self):
-        """Update button appearance based on scenario state"""
-        if not hasattr(self, 'scenario_toggle') or not self.scenario_toggle:
-            return  # Skip if button hasn't been created yet
-            
-        if self.selected_scenario:
-            active = self.selected_scenario.is_active
-            self.scenario_toggle.props(remove='disabled')  # Enable the button
-            if active:
-                self.scenario_toggle.props('icon=stop color=red')
-                self.scenario_toggle.text = 'Stop Scenario'
-            else:
-                self.scenario_toggle.props('icon=play_arrow color=green')
-                self.scenario_toggle.text = 'Start Scenario'
-        else:
-            self.scenario_toggle.text = 'Select Scenario First'
-            self.scenario_toggle.props('disabled color=grey icon=play_arrow')
-            self.scenario_toggle.props('disabled')
-
-    def _start_scenario(self):
-        """Start the selected scenario"""
-        try:
-            with SessionLocal() as session:
-                # First deactivate any currently active scenarios
-                session.query(Scenario).update({'is_active': False})
-                session.commit()
-                
-                # Eager load containers and their devices
-                scenario = session.query(Scenario).options(
-                    joinedload(Scenario.containers).joinedload(Container.devices)
-                ).get(self.selected_scenario.id)
-                
-                if not scenario:
-                    raise ValueError(f"Scenario {self.selected_scenario.id} not found")
-                
-                # Activate only the selected scenario
-                scenario.is_active = True
-                scenario.activate()
-                session.commit()  # Commit the activation
-                
-                # Refresh scenario state after activation
-                session.refresh(scenario)
-                self.selected_scenario = scenario
-                
-                # Set the first container as active
-                if scenario.containers:
-                    # Get a fresh container instance
-                    container_id = scenario.containers[0].id
-                    self.active_container = session.query(Container).get(container_id)
-                    logger.info(f"Set active container to: {self.active_container.name}")
-                else:
-                    logger.warning("Scenario has no containers")
-                    self.active_container = None
-                
-            ui.notify(f"Scenario started: {self.selected_scenario.name}", type='positive')
-            # Update button state to show Stop
-            self._update_toggle_button_state()
-            # Force an immediate update
-            asyncio.create_task(self._update_smart_home())
-            
-        except Exception as e:
-            logger.error(f"Error starting scenario: {str(e)}", exc_info=True)
-            ui.notify("Failed to start scenario", type='negative')
-
-    def _stop_scenario(self):
-        """Stop the selected scenario"""
-        try:
-            with SessionLocal() as session:
-                if self.selected_scenario:
-                    # Get fresh scenario instance
-                    scenario = session.query(Scenario).get(self.selected_scenario.id)
-                    if scenario:
-                        scenario.is_active = False
-                        session.commit()
-                        session.refresh(scenario)
-                        self.selected_scenario = scenario
-                
-                # Clear the active container
-                self.active_container = None
-                
-                # Stop the simulator
-                self.simulator.stop_simulation()
-                
-            ui.notify("Scenario stopped", type='warning')
-            logger.info("Scenario stopped successfully")
-            
-        except Exception as e:
-            logger.error(f"Error stopping scenario: {e}")
-            ui.notify("Error stopping scenario", type='negative')
-
-    def _refresh_and_update(self):
-        """Refresh container from database and update UI"""
-        if self.active_container:
-            try:
-                with SessionLocal() as session:
-                    # Refresh container reference
-                    container = session.query(Container).get(self.active_container.id)
-                    if container:
-                        self.active_container = container
-                        asyncio.create_task(self._update_smart_home())
-                    else:
-                        logger.warning("Active container no longer exists in database")
-                        self.active_container = None
-            except Exception as e:
-                logger.error(f"Error refreshing container: {str(e)}", exc_info=True)
+            ui.notify("Error updating smart home visualization", type='negative')
 
     def _initialize_simulation(self):
         """Start simulation after all handlers are registered"""
@@ -866,6 +468,7 @@ class SmartHomePage:
         except Exception as e:
             logger.error(f"Error updating weather display: {e}")
             logger.exception("Full traceback:")
+            ui.notify(f'Error updating weather display: {str(e)}', type='negative')
 
     async def _update_simulation_with_weather(self, weather_data: dict):
         """Update simulation with real weather data"""
@@ -910,6 +513,706 @@ class SmartHomePage:
         except Exception as e:
             logger.error(f"Error updating simulation with weather data: {e}")
             logger.exception("Full traceback:")
+            ui.notify(f'Error updating simulation with weather data: {str(e)}', type='negative')
+
+    def _reset_weather_settings(self):
+        """Reset weather settings to default values"""
+        self.location_type_select.value = LocationType.CITY.value
+        self.location_search.value = ''
+        self.current_location = Location(
+            region="San Francisco",
+            latitude=37.7749,
+            longitude=-122.4194,
+            timezone="America/Los_Angeles"
+        )
+        self.timezone_select.value = self.current_location.timezone
+        self.time_input.value = datetime.now().strftime('%H:%M')
+        self.weather_select.value = WeatherCondition.SUNNY.value
+        self.include_aqi = True
+        self._update_simulation_state()
+        ui.notify('Weather settings reset to default values')
+
+    async def _update_weather_condition(self, condition: str):
+        """Update weather condition and simulation state"""
+        try:
+            if condition:
+                self.current_weather = WeatherCondition(condition)
+            else:
+                logger.warning("Empty weather condition provided, using default SUNNY")
+                self.current_weather = WeatherCondition.SUNNY
+                
+            await self._update_simulation_state()
+        except Exception as e:
+            logger.error(f"Error updating weather condition: {e}")
+            # Use default value in case of error
+            self.current_weather = WeatherCondition.SUNNY
+            try:
+                await self._update_simulation_state()
+            except Exception as inner_e:
+                logger.error(f"Error in fallback simulation state update: {inner_e}")
+
+    def _update_simulation_time(self, time_str: str):
+        """Update simulation time"""
+        if time_str:
+            try:
+                hour, minute = map(int, time_str.split(':'))
+                self._update_simulation_state(time(hour, minute))
+            except Exception as e:
+                logger.error(f"Error updating simulation time: {e}")
+        else:
+            # Use current time as fallback
+            current_time = datetime.now().time()
+            self._update_simulation_state(current_time)
+
+    async def _update_simulation_state(self, custom_time: Optional[time] = None):
+        """Update simulation state with new environmental conditions"""
+        simulation_time = None
+        
+        try:
+            # Create simulation time object safely
+            current_datetime = datetime.now()
+            simulation_time = SimulationTime(
+                start_time=current_datetime,
+                custom_time=custom_time
+            )
+            
+            # Check if current_location is valid before proceeding
+            if not hasattr(self, 'current_location') or self.current_location is None:
+                logger.warning("Cannot update simulation state: current_location is None")
+                return
+                
+            # Get current weather data with error handling
+            weather_data = None
+            try:
+                weather_data = await self.weather_service.get_weather(
+                    LocationQuery(
+                        type=LocationType.LATLON,
+                        value=f"{self.current_location.latitude},{self.current_location.longitude}"
+                    )
+                )
+            except Exception as network_error:
+                logger.error(f"Error fetching weather data: {network_error}")
+                # Continue with None weather_data
+            
+            # Update simulation state with actual weather data (if available)
+            if hasattr(self, 'simulator') and self.simulator is not None:
+                if weather_data:
+                    self.simulator.update_environmental_state(
+                        self.current_weather,
+                        self.current_location,
+                        simulation_time,
+                        weather_data
+                    )
+                else:
+                    # Fallback to default state without weather data
+                    self.simulator.update_environmental_state(
+                        self.current_weather,
+                        self.current_location,
+                        simulation_time
+                    )
+            else:
+                logger.warning("Cannot update simulation state: simulator is None")
+            
+        except Exception as e:
+            logger.error(f"Error updating simulation state: {e}")
+            logger.exception("Full traceback:")
+            
+            # Attempt minimal fallback if simulation_time was created
+            if simulation_time and hasattr(self, 'simulator') and self.simulator is not None:
+                try:
+                    # Basic fallback without weather data
+                    self.simulator.update_environmental_state(
+                        WeatherCondition.SUNNY,  # Use default weather
+                        self.current_location,
+                        simulation_time
+                    )
+                except Exception as fallback_error:
+                    logger.error(f"Critical error in simulation fallback: {fallback_error}")
+
+    def _update_scenario_selection(self, scenario_name):
+        """Handle scenario selection without auto-starting"""
+        try:
+            # Handle None, empty string, or non-string input
+            logger.info(f"_update_scenario_selection received: {scenario_name} (type: {type(scenario_name)})")
+            
+            if scenario_name is None or (isinstance(scenario_name, str) and not scenario_name.strip()):
+                logger.info("Empty scenario selection - clearing current selection")
+                self.selected_scenario = None
+                try:
+                    self._update_toggle_button_state()
+                except Exception as e:
+                    logger.error(f"Error updating toggle button with null selection: {str(e)}", exc_info=True)
+                return
+                
+            # Convert to string if it's not already
+            if not isinstance(scenario_name, str):
+                logger.info(f"Converting non-string {type(scenario_name)} to string")
+                scenario_name = str(scenario_name)
+            
+            logger.info(f"Processing scenario selection. Final name: {scenario_name}")
+            
+            with SessionLocal() as session:
+                # Load the selected scenario with its containers
+                logger.info(f"Querying database for scenario: {scenario_name}")
+                scenario = session.query(Scenario).options(
+                    joinedload(Scenario.containers)
+                ).filter_by(name=scenario_name).first()
+                
+                if scenario:
+                    logger.info(f"Found scenario in database: {scenario.name} (id: {scenario.id})")
+                    self.selected_scenario = scenario
+                    # Don't set active container until scenario is started
+                    self.active_container = None
+                    logger.info(f"Selected scenario containers: {[c.name for c in scenario.containers]}")
+                    
+                    # Update button state to show 'Start Scenario'
+                    try:
+                        self._update_toggle_button_state()
+                    except Exception as e:
+                        logger.error(f"Error updating toggle button: {str(e)}", exc_info=True)
+                        # Continue without updating the toggle button
+                else:
+                    logger.warning(f"Scenario not found in database: {scenario_name}")
+                    ui.notify("Scenario not found", type='warning')
+                
+        except Exception as e:
+            logger.error(f"Error in scenario selection: {str(e)}", exc_info=True)
+            ui.notify("Error selecting scenario", type='negative')
+
+    def _update_toggle_button_state(self):
+        """Update toggle button state based on selected scenario"""
+        try:
+            if not hasattr(self, 'scenario_toggle') or self.scenario_toggle is None:
+                # Toggle button doesn't exist yet, do nothing
+                logger.info("Toggle button doesn't exist yet, skipping update")
+                return
+                
+            if not self.selected_scenario:
+                # No scenario selected
+                logger.info("No scenario selected, disabling toggle button")
+                self.scenario_toggle.text = 'Select Scenario First'
+                # Update properties individually to avoid string parsing issues
+                self.scenario_toggle.props(remove='color icon disabled')
+                self.scenario_toggle.props('color=grey')
+                self.scenario_toggle.props('icon=play_arrow')
+                self.scenario_toggle.props('disabled=true')
+                return
+                
+            # Check if scenario is active
+            is_active = self.selected_scenario.is_active
+            logger.info(f"Updating toggle button for scenario: {self.selected_scenario.name}, active: {is_active}")
+            
+            if is_active:
+                # Scenario is active, button should stop it
+                logger.info("Scenario is active, setting Stop button")
+                self.scenario_toggle.text = 'Stop Scenario'
+                # Update properties individually
+                self.scenario_toggle.props(remove='color icon disabled')
+                self.scenario_toggle.props('color=red')
+                self.scenario_toggle.props('icon=stop')
+                self.scenario_toggle.classes('bg-red-500', remove=False)
+                self.scenario_toggle.classes('bg-blue-500', remove=True)
+                
+                # Update active scenario label
+                if hasattr(self, 'active_scenario_label') and self.active_scenario_label is not None:
+                    self.active_scenario_label.text = self.selected_scenario.name
+            else:
+                # Scenario is not active, button should start it
+                logger.info("Scenario is not active, setting Start button")
+                self.scenario_toggle.text = 'Start Scenario'
+                # Update properties individually
+                self.scenario_toggle.props(remove='color icon disabled')
+                self.scenario_toggle.props('color=blue')
+                self.scenario_toggle.props('icon=play_arrow')
+                self.scenario_toggle.classes('bg-blue-500', remove=False)
+                self.scenario_toggle.classes('bg-red-500', remove=True)
+                
+                # Check if any other scenario is active
+                active_scenario = None
+                with SessionLocal() as session:
+                    active_scenario = session.query(Scenario).filter(Scenario.is_active == True).first()
+                
+                # Update active scenario label
+                if hasattr(self, 'active_scenario_label') and self.active_scenario_label is not None:
+                    if active_scenario:
+                        self.active_scenario_label.text = active_scenario.name
+                    else:
+                        self.active_scenario_label.text = 'None'
+        except Exception as e:
+            logger.error(f"Error in _update_toggle_button_state: {str(e)}", exc_info=True)
+            # Don't rethrow to prevent UI disruption
+
+    def build(self):
+        """Build the smart home page UI"""
+        with ui.column().classes('w-full max-w-6xl mx-auto p-4 gap-4'):
+            self._build_scenario_controls()
+            self._build_location_controls()
+            self._build_floor_plan()
+
+    def _build_scenario_controls(self):
+        """Build scenario selection and control section"""
+        with ui.card().classes('w-full p-4'):
+            # First show active scenario label
+            with ui.row().classes('items-center mb-2'):
+                ui.label('Active Scenario:').classes('text-lg font-medium')
+                self.active_scenario_label = ui.label('None').classes('text-lg font-bold ml-2')
+            
+            # Then show the controls
+            with ui.row().classes('items-center gap-4'):
+                # Create scenario select with increased width
+                logger.debug(f"Building scenario select with options: {self.scenario_options}")
+                
+                self.scenario_select = ui.select(
+                    options=self.scenario_options,
+                    label="Select Scenario"
+                ).props('outlined options-dense')
+                self.scenario_select.classes('min-w-[300px] md:min-w-[400px]')
+                
+                # Use a simplified direct callback that gets the value
+                # This works better with NiceGUI's event handling
+                def on_select_change(e):
+                    try:
+                        # For NiceGUI select components, the value is in event.value 
+                        # or event.args when using update:model-value event
+                        if hasattr(e, 'value'):
+                            value = e.value
+                        elif hasattr(e, 'args'):
+                            value = e.args
+                        else:
+                            value = str(e)
+                            
+                        logger.info(f"Direct scenario select value: {value} (type: {type(value)})")
+                        
+                        # For select components, sometimes the value comes as the entire selection object
+                        if isinstance(value, dict) and 'label' in value:
+                            value = value['label']
+                            
+                        self._update_scenario_selection(value)
+                    except Exception as ex:
+                        logger.error(f"Error in direct scenario selection: {str(ex)}", exc_info=True)
+                
+                # Use model-value event which is more reliable for select components
+                self.scenario_select.on('update:model-value', on_select_change)
+                logger.debug("Scenario select component built")
+                
+                # Create toggle button
+                self.scenario_toggle = ui.button(
+                    'Start Scenario',
+                    on_click=self._toggle_scenario
+                ).classes('bg-blue-500 text-white')
+
+    def _build_location_controls(self):
+        """Build location and environmental controls section"""
+        with ui.card().classes('w-full p-4'):
+            with ui.column().classes('w-full gap-4'):
+                # Location Type Selection
+                with ui.row().classes('items-start gap-4 flex-wrap'):
+                    # Create options list for location type select
+                    location_type_options = [t.value.title() for t in LocationType]
+                    
+                    with ui.column().classes('flex-1'):
+                        self.location_type_select = ui.select(
+                            label='Location Type',
+                            options=location_type_options,
+                            value=location_type_options[0],
+                        ).props('outlined dense').classes('w-64')  # Wider select
+                        self.location_type_select.on('update:model-value', 
+                                                   lambda e: self._handle_location_type_change(e))
+                
+                # Location Inputs Container
+                with ui.row().classes('items-start gap-4 flex-wrap'):
+                    # City search
+                    with ui.column().classes('flex-1').bind_visibility_from(
+                        self.location_type_select, 'value',
+                        lambda v: v.lower() == LocationType.CITY.value):
+                        
+                        # Create initial options from popular cities
+                        self.location_search = ui.select(
+                            label='Search City',
+                            options=[],
+                            with_input=True,
+                        ).props('outlined dense').classes('w-96')  # Wider select
+                        
+                        # Initialize search results and set initial options
+                        self.search_results = []
+                        self._update_location_options(self.popular_cities)
+                        
+                        self.location_search.on('filter', self._handle_location_search)
+                        self.location_search.on('update:model-value', self._handle_location_select)
+
+                    # Lat/Lon inputs
+                    with ui.column().classes('flex-1').bind_visibility_from(
+                        self.location_type_select, 'value',
+                        lambda v: v.lower() == LocationType.LATLON.value):
+                        with ui.row().classes('gap-4'):
+                            self.latitude_input = ui.number(
+                                label='Latitude',
+                                min=-90,
+                                max=90,
+                                step=0.000001,
+                                format='%.6f'
+                            ).props('outlined dense').classes('w-48')
+                            
+                            self.longitude_input = ui.number(
+                                label='Longitude',
+                                min=-180,
+                                max=180,
+                                step=0.000001,
+                                format='%.6f'
+                            ).props('outlined dense').classes('w-48')
+                    
+                    # Postcode input
+                    with ui.column().classes('flex-1').bind_visibility_from(
+                        self.location_type_select, 'value',
+                        lambda v: v.lower() == LocationType.POSTCODE.value):
+                        
+                        self.postcode_input = ui.input(
+                            label='Postal Code'
+                        ).props('outlined dense').classes('w-48')
+                    
+                    # IATA input
+                    with ui.column().classes('flex-1').bind_visibility_from(
+                        self.location_type_select, 'value',
+                        lambda v: v.lower() == LocationType.IATA.value):
+                        
+                        self.iata_input = ui.input(
+                            label='IATA Code'
+                        ).props('outlined dense').classes('w-48')
+                    
+                    # METAR input
+                    with ui.column().classes('flex-1').bind_visibility_from(
+                        self.location_type_select, 'value',
+                        lambda v: v.lower() == LocationType.METAR.value):
+                        
+                        self.metar_input = ui.input(
+                            label='METAR Code'
+                        ).props('outlined dense').classes('w-48')
+                    
+                    # IP input
+                    with ui.column().classes('flex-1').bind_visibility_from(
+                        self.location_type_select, 'value',
+                        lambda v: v.lower() == LocationType.IP.value):
+                        
+                        self.ip_input = ui.input(
+                            label='IP Address (leave empty for auto)'
+                        ).props('outlined dense').classes('w-64')
+                    
+                    # Weather result card
+                    self.weather_result_card = ui.card().classes('w-full p-4 mt-4')
+                
+                # Remove the Time and Weather Controls section
+                # Keep related variables for compatibility with other code
+                self.time_input = None  
+                self.weather_select = None
+                # Set defaults for the variables that would have been set by these controls
+                self.current_weather = WeatherCondition.SUNNY
+                self.include_aqi = True
+                # Update simulator with default weather
+                self.simulator.update_environmental_state(
+                    self.current_weather,
+                    self.current_location,
+                    self.simulation_time
+                )
+                ui.notify('Weather settings reset to default values')
+
+    def _build_floor_plan(self):
+        """Build floor plan visualization section"""
+        with ui.card().classes('w-full p-4'):
+            ui.label('Smart Home Floor Plan').classes('text-h6 mb-4')
+            # Create the floor plan with normalized room types
+            self.floor_plan.create_floor_plan()
+
+    def _show_location_input(self, input_type: str):
+        """Show the selected location input and hide others"""
+        input_cards = {
+            'city': self.city_card,
+            'latlon': self.latlon_card,
+        }
+        
+        for card_type, card in input_cards.items():
+            if card_type == input_type:
+                card.remove_class('hidden')
+            else:
+                card.add_class('hidden')
+
+    def _handle_location_type_change(self, location_type: str):
+        """Handle location type change with validation"""
+        try:
+            # Convert back to enum value for internal use
+            location_type = location_type.upper()
+            self._show_location_input(location_type)
+            
+        except Exception as e:
+            logger.error(f"Error handling location type change: {e}")
+            ui.notify("Error changing location type", type='negative')
+
+    def _handle_scenario_select_change(self, event):
+        """Handle raw selection change event from UI"""
+        try:
+            logger.info(f"Received selection event of type {type(event)}: {event}")
+            
+            # Extract scenario name from event with proper type checking
+            scenario_name = None
+            
+            if hasattr(event, 'args') and isinstance(event.args, dict):
+                logger.info(f"Event has args dictionary: {event.args}")
+                scenario_name = event.args.get('label')
+                logger.info(f"Extracted label from args: {scenario_name}")
+            else:
+                # Handle the case where event might be a boolean or other non-string type
+                logger.info(f"Event doesn't have args dictionary, event type: {type(event)}")
+                if event is not None and not isinstance(event, bool):
+                    scenario_name = str(event) if event else None
+                    logger.info(f"Converted event to string: {scenario_name}")
+                else:
+                    # If event is a boolean or None, set scenario_name to None
+                    scenario_name = None
+                    logger.info("Event is None or boolean, setting scenario_name to None")
+                    
+            logger.info(f"Final extracted scenario name: {scenario_name} (type: {type(scenario_name)})")
+            self._update_scenario_selection(scenario_name)
+            
+        except Exception as e:
+            logger.error(f"Error handling scenario selection event: {str(e)}", exc_info=True)
+            ui.notify("Error selecting scenario", type='negative')
+
+    def _toggle_scenario(self):
+        """Toggle scenario activation"""
+        logger.info(f"Toggle scenario called. Selected scenario: {self.selected_scenario.name if self.selected_scenario else 'None'}")
+        
+        # Refresh the selected scenario status from the database to ensure we have the latest state
+        if self.selected_scenario:
+            with SessionLocal() as session:
+                scenario = session.query(Scenario).get(self.selected_scenario.id)
+                if scenario:
+                    self.selected_scenario = scenario
+                    logger.info(f"Refreshed scenario from database: {scenario.name} (active: {scenario.is_active})")
+                else:
+                    logger.warning(f"Selected scenario {self.selected_scenario.id} no longer exists in database")
+                    self.selected_scenario = None
+        
+        if not self.selected_scenario:
+            logger.warning("Attempt to toggle scenario without selection")
+            ui.notify("Please select a scenario first", type='warning')
+            return
+        
+        try:
+            logger.info(f"Current scenario state - Active: {self.selected_scenario.is_active}")
+            if self.selected_scenario.is_active:
+                self._stop_scenario()
+            else:
+                self._start_scenario()
+            
+            self._update_toggle_button_state()
+        except Exception as e:
+            logger.error(f"Scenario toggle failed: {str(e)}", exc_info=True)
+            ui.notify("Scenario operation failed", type='negative')
+
+    def _update_toggle_button_state(self):
+        """Update toggle button state based on selected scenario"""
+        try:
+            if not hasattr(self, 'scenario_toggle') or self.scenario_toggle is None:
+                # Toggle button doesn't exist yet, do nothing
+                logger.info("Toggle button doesn't exist yet, skipping update")
+                return
+                
+            if not self.selected_scenario:
+                # No scenario selected
+                logger.info("No scenario selected, disabling toggle button")
+                self.scenario_toggle.text = 'Select Scenario First'
+                # Update properties individually to avoid string parsing issues
+                self.scenario_toggle.props(remove='color icon disabled')
+                self.scenario_toggle.props('color=grey')
+                self.scenario_toggle.props('icon=play_arrow')
+                self.scenario_toggle.props('disabled=true')
+                return
+                
+            # Check if scenario is active
+            is_active = self.selected_scenario.is_active
+            logger.info(f"Updating toggle button for scenario: {self.selected_scenario.name}, active: {is_active}")
+            
+            if is_active:
+                # Scenario is active, button should stop it
+                logger.info("Scenario is active, setting Stop button")
+                self.scenario_toggle.text = 'Stop Scenario'
+                # Update properties individually
+                self.scenario_toggle.props(remove='color icon disabled')
+                self.scenario_toggle.props('color=red')
+                self.scenario_toggle.props('icon=stop')
+                self.scenario_toggle.classes('bg-red-500', remove=False)
+                self.scenario_toggle.classes('bg-blue-500', remove=True)
+                
+                # Update active scenario label
+                if hasattr(self, 'active_scenario_label') and self.active_scenario_label is not None:
+                    self.active_scenario_label.text = self.selected_scenario.name
+            else:
+                # Scenario is not active, button should start it
+                logger.info("Scenario is not active, setting Start button")
+                self.scenario_toggle.text = 'Start Scenario'
+                # Update properties individually
+                self.scenario_toggle.props(remove='color icon disabled')
+                self.scenario_toggle.props('color=blue')
+                self.scenario_toggle.props('icon=play_arrow')
+                self.scenario_toggle.classes('bg-blue-500', remove=False)
+                self.scenario_toggle.classes('bg-red-500', remove=True)
+                
+                # Check if any other scenario is active
+                active_scenario = None
+                with SessionLocal() as session:
+                    active_scenario = session.query(Scenario).filter(Scenario.is_active == True).first()
+                
+                # Update active scenario label
+                if hasattr(self, 'active_scenario_label') and self.active_scenario_label is not None:
+                    if active_scenario:
+                        self.active_scenario_label.text = active_scenario.name
+                    else:
+                        self.active_scenario_label.text = 'None'
+        except Exception as e:
+            logger.error(f"Error in _update_toggle_button_state: {str(e)}", exc_info=True)
+            # Don't rethrow to prevent UI disruption
+
+    def _refresh_and_update(self):
+        """Refresh container from database and update UI"""
+        if self.active_container:
+            try:
+                with SessionLocal() as session:
+                    # Refresh container reference
+                    container = session.query(Container).get(self.active_container.id)
+                    if container:
+                        self.active_container = container
+                        asyncio.create_task(self._update_smart_home())
+                    else:
+                        logger.warning("Active container no longer exists in database")
+                        self.active_container = None
+            except Exception as e:
+                logger.error(f"Error refreshing container: {str(e)}", exc_info=True)
+
+    async def _fetch_weather_data(self):
+        """Fetch weather data from API"""
+        try:
+            if not hasattr(self, '_current_location_query'):
+                ui.notify('Please select a location first', type='warning')
+                return
+                
+            # Fetch weather data
+            weather_data = self.weather_service.get_weather(self._current_location_query, self.include_aqi)
+            if weather_data:
+                self._update_weather_display(weather_data)
+            else:
+                ui.notify('No weather data available', type='warning')
+            
+        except Exception as e:
+            logger.error(f"Error fetching weather data: {e}")
+            logger.exception("Full traceback:")
+            ui.notify(f'Error fetching weather data: {str(e)}', type='negative')
+
+    async def _update_weather_display(self, weather_data: dict):
+        """Update weather display with API data"""
+        try:
+            # Check if weather_result_card exists and is not None
+            if not hasattr(self, 'weather_result_card') or self.weather_result_card is None:
+                logger.warning("Cannot update weather display: weather_result_card is None")
+                return
+                
+            # Clear previous content
+            self.weather_result_card.clear()
+            
+            # Update weather display
+            with self.weather_result_card:
+                with ui.row().classes('w-full items-center justify-between'):
+                    ui.label(f"Weather in {weather_data.get('location', {}).get('name', 'Unknown Location')}")
+                    ui.label(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                
+                with ui.row().classes('w-full gap-4 mt-2'):
+                    with ui.card().classes('flex-1 p-4'):
+                        ui.label('Temperature').classes('text-lg font-bold')
+                        temp_c = weather_data.get('temperature')
+                        temp_f = (temp_c * 9/5 + 32) if temp_c is not None else None
+                        ui.label(f"{temp_c if temp_c is not None else 'N/A'}°C / {temp_f if temp_f is not None else 'N/A'}°F")
+                    
+                    with ui.card().classes('flex-1 p-4'):
+                        ui.label('Condition').classes('text-lg font-bold')
+                        ui.label(weather_data.get('description', 'N/A'))
+                    
+                    with ui.card().classes('flex-1 p-4'):
+                        ui.label('Humidity').classes('text-lg font-bold')
+                        ui.label(f"{weather_data.get('humidity', 'N/A')}%")
+                
+                if weather_data.get('air_quality'):
+                    with ui.card().classes('w-full p-4 mt-2'):
+                        ui.label('Air Quality').classes('text-lg font-bold')
+                        with ui.row().classes('w-full gap-4'):
+                            with ui.column().classes('flex-1'):
+                                ui.label('PM2.5').classes('font-bold')
+                                ui.label(f"{weather_data['air_quality'].get('pm2_5', 'N/A')} μg/m³")
+                            with ui.column().classes('flex-1'):
+                                ui.label('PM10').classes('font-bold')
+                                ui.label(f"{weather_data['air_quality'].get('pm10', 'N/A')} μg/m³")
+                            with ui.column().classes('flex-1'):
+                                ui.label('CO').classes('font-bold')
+                                ui.label(f"{weather_data['air_quality'].get('co', 'N/A')} μg/m³")
+                            with ui.column().classes('flex-1'):
+                                ui.label('NO2').classes('font-bold')
+                                ui.label(f"{weather_data['air_quality'].get('no2', 'N/A')} μg/m³")
+                            with ui.column().classes('flex-1'):
+                                ui.label('O3').classes('font-bold')
+                                ui.label(f"{weather_data['air_quality'].get('o3', 'N/A')} μg/m³")
+                
+                # Update simulator with real weather data
+                try:
+                    await self._update_simulation_with_weather(weather_data)
+                except Exception as e:
+                    logger.error(f"Error updating simulation with weather data: {e}")
+        
+        except Exception as e:
+            logger.error(f"Error updating weather display: {e}")
+            logger.exception("Full traceback:")
+            ui.notify(f'Error updating weather display: {str(e)}', type='negative')
+
+    async def _update_simulation_with_weather(self, weather_data: dict):
+        """Update simulation with real weather data"""
+        try:
+            # Map weather condition to our enum
+            condition_text = weather_data.get('description', '').lower()
+            weather_mapping = {
+                'sunny': WeatherCondition.SUNNY,
+                'partly cloudy': WeatherCondition.PARTLY_CLOUDY,
+                'cloudy': WeatherCondition.CLOUDY,
+                'overcast': WeatherCondition.OVERCAST,
+                'light rain': WeatherCondition.LIGHT_RAIN,
+                'rain': WeatherCondition.RAINY,
+                'heavy rain': WeatherCondition.HEAVY_RAIN,
+                'thunderstorm': WeatherCondition.STORMY,
+                'light snow': WeatherCondition.LIGHT_SNOW,
+                'snow': WeatherCondition.SNOWY,
+                'heavy snow': WeatherCondition.HEAVY_SNOW,
+                'fog': WeatherCondition.FOGGY,
+                'windy': WeatherCondition.WINDY
+            }
+            
+            # Find best matching weather condition
+            matched_condition = WeatherCondition.SUNNY  # default
+            for key, value in weather_mapping.items():
+                if key in condition_text:
+                    matched_condition = value
+                    break
+            
+            # Update weather select and trigger simulation update
+            # Check if weather_select exists and is not None before using it
+            if hasattr(self, 'weather_select') and self.weather_select is not None:
+                try:
+                    self.weather_select.value = matched_condition.value.replace('_', ' ').title()
+                    await self.weather_select.update()
+                except Exception as e:
+                    logger.error(f"Error updating weather select UI: {e}")
+            
+            # Update the weather condition regardless of UI component status
+            await self._update_weather_condition(matched_condition.value)
+            
+        except Exception as e:
+            logger.error(f"Error updating simulation with weather data: {e}")
+            logger.exception("Full traceback:")
+            ui.notify(f'Error updating simulation with weather data: {str(e)}', type='negative')
 
     def _reset_weather_settings(self):
         """Reset weather settings to default values"""
@@ -1414,6 +1717,91 @@ class SmartHomePage:
             return 0  # Night time
         
         return 0
+
+    def _start_scenario(self):
+        """Start the selected scenario"""
+        try:
+            with SessionLocal() as session:
+                # First deactivate any currently active scenarios
+                session.query(Scenario).update({'is_active': False})
+                
+                # Also explicitly deactivate all active containers
+                session.query(Container).update({'is_active': False, 'status': 'stopped'})
+                session.commit()
+                
+                # Eager load containers and their devices
+                scenario = session.query(Scenario).options(
+                    joinedload(Scenario.containers).joinedload(Container.devices)
+                ).get(self.selected_scenario.id)
+                
+                if not scenario:
+                    raise ValueError(f"Scenario {self.selected_scenario.id} not found")
+                
+                # Activate only the selected scenario
+                scenario.is_active = True
+                scenario.activate()  # This will activate the containers
+                session.commit()  # Commit the activation
+                
+                # Refresh scenario state after activation
+                session.refresh(scenario)
+                self.selected_scenario = scenario
+                
+                # Set the first container as active
+                if scenario.containers:
+                    # Get a fresh container instance
+                    container_id = scenario.containers[0].id
+                    self.active_container = session.query(Container).get(container_id)
+                    logger.info(f"Set active container to: {self.active_container.name}")
+                else:
+                    logger.warning("Scenario has no containers")
+                    self.active_container = None
+                
+            ui.notify(f"Scenario started: {self.selected_scenario.name}", type='positive')
+            # Update button state to show Stop
+            self._update_toggle_button_state()
+            # Force an immediate update
+            asyncio.create_task(self._update_smart_home())
+            
+        except Exception as e:
+            logger.error(f"Error starting scenario: {str(e)}", exc_info=True)
+            ui.notify("Failed to start scenario", type='negative')
+
+    def _stop_scenario(self):
+        """Stop the selected scenario"""
+        try:
+            with SessionLocal() as session:
+                if self.selected_scenario:
+                    # Get fresh scenario instance with all containers
+                    scenario = session.query(Scenario).options(
+                        joinedload(Scenario.containers)
+                    ).get(self.selected_scenario.id)
+                    
+                    if scenario:
+                        # First explicitly stop all containers in this scenario
+                        for container in scenario.containers:
+                            container.is_active = False
+                            container.status = 'stopped'
+                        
+                        # Then deactivate the scenario
+                        scenario.is_active = False
+                        scenario.deactivate()
+                        
+                        session.commit()
+                        session.refresh(scenario)
+                        self.selected_scenario = scenario
+                
+                # Clear the active container
+                self.active_container = None
+                
+                # Stop the simulator
+                self.simulator.stop_simulation()
+                
+            ui.notify("Scenario stopped", type='warning')
+            # Update button state to show Start
+            self._update_toggle_button_state()
+        except Exception as e:
+            logger.error(f"Error stopping scenario: {str(e)}", exc_info=True)
+            ui.notify("Failed to stop scenario", type='negative')
 
 async def update_floorplan(sensor_data):
     """Asynchronously update the floor plan view with the new sensor reading using the location provided in the sensor data."""

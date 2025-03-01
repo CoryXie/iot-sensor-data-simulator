@@ -82,10 +82,12 @@ class ContainerCard():
                         with ui.row().classes('h-9 gap-0.5'):
                             with ui.row().classes('gap-0.5'):
                                 if self.start_callback:
-                                    ui.button(icon='play_arrow', on_click=lambda: self.show_interface_selection_dialog(container, self.start_callback)).props('flat').classes('px-2 text-black')
+                                    self.start_button = ui.button(icon='play_arrow', on_click=lambda: self.show_interface_selection_dialog(container, self.start_callback)).props('flat').classes('px-2 text-black')
+                                    self.start_button.set_visibility(not container.is_active)
                                 if self.stop_callback:
-                                    ui.button(icon='pause', on_click=lambda c=container: self.stop_callback(
+                                    self.stop_button = ui.button(icon='pause', on_click=lambda c=container: self.stop_callback(
                                         c)).props('flat').classes('px-2 text-black')
+                                    self.stop_button.set_visibility(container.is_active)
                             ui.row().classes('w-px h-full bg-gray-300')
                             ui.button(icon='exit_to_app', on_click=lambda: self.show_export_dialog()).props('flat').classes('px-2 text-black')
 
@@ -470,3 +472,26 @@ class ContainerCard():
                 ui.tree(new_data, label_key="id")
         except Exception as e:
             print(f"Error updating tree: {str(e)}")
+
+    def update_ui(self):
+        """Update the UI elements to reflect the current state of the container"""
+        try:
+            # Update the status indicator
+            if self.active_dot:
+                self.active_dot.classes(remove=['bg-red-500', 'bg-green-500'])
+                self.active_dot.classes('bg-green-500' if self.container.is_active else 'bg-red-500')
+            
+            # Update the status label
+            if hasattr(self, 'status_label') and self.status_label:
+                self.status_label.set_text('Active' if self.container.is_active else 'Inactive')
+                
+            # Update the start/stop buttons if they exist
+            if hasattr(self, 'start_button') and self.start_button:
+                self.start_button.set_visibility(not self.container.is_active)
+                
+            if hasattr(self, 'stop_button') and self.stop_button:
+                self.stop_button.set_visibility(self.container.is_active)
+                
+            logger.debug(f"Updated UI for container {self.container.name}, active status: {self.container.is_active}")
+        except Exception as e:
+            logger.error(f"Error updating container card UI: {str(e)}")

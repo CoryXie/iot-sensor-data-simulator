@@ -359,158 +359,157 @@ DEVICE_TEMPLATES = {
 SCENARIO_TEMPLATES = {
     'Morning Routine': {
         'type': 'routine',
-        'rooms': ['bedroom', 'bathroom', 'kitchen'],
         'description': 'Morning activities across multiple rooms',
-        'devices': [
+        'containers': [
             {
-                'device': 'Environmental Monitor',
-                'sensors': ['Temperature', 'Humidity'],
-                'rooms': ['bedroom', 'bathroom']
+                'room_type': 'bedroom',
+                'devices': [
+                    {'device_type': 'Environmental Monitor'},
+                    {'device_type': 'Light Control'}
+                ]
             },
             {
-                'device': 'Light Control',
-                'sensors': ['Light Level', 'Color Temperature'],
-                'rooms': ['bedroom', 'kitchen']
+                'room_type': 'bathroom',
+                'devices': [
+                    {'device_type': 'Environmental Monitor'}
+                ]
+            },
+            {
+                'room_type': 'kitchen',
+                'devices': [
+                    {'device_type': 'Light Control'}
+                ]
             }
         ]
     },
     'Day Mode': {
         'type': 'standard',
-        'room_type': 'living_room',
         'description': 'Optimal daytime settings',
-        'devices': [
+        'containers': [
             {
-                'name': 'Environmental Monitor',
-                'type': 'environmental',
-                'sensors': [
-                    {'name': 'Temperature', 'type': 'temperature', 'unit': '°C'}
+                'room_type': 'living_room',
+                'devices': [
+                    {'device_type': 'Environmental Monitor'}
                 ]
             }
         ]
     },
     'Evening Mode': {
         'type': 'standard',
-        'room_type': 'living_room',
         'description': 'Comfortable evening settings',
-        'devices': [
+        'containers': [
             {
-                'name': 'Light Control',
-                'type': 'lighting',
-                'sensors': [
-                    {'name': 'Light Level', 'type': 'light', 'unit': 'lux'},
-                    {'name': 'Color Temperature', 'type': 'color_temp', 'unit': 'K'}
+                'room_type': 'living_room',
+                'devices': [
+                    {'device_type': 'Light Control'}
                 ]
             }
         ]
     },
     'Night Mode': {
         'type': 'night',
-        'room_type': 'bedroom',
         'description': 'Settings for sleep and minimal activity',
-        'devices': [
+        'containers': [
             {
-                'name': 'Security System',
-                'type': 'security',
-                'sensors': [
-                    {'name': 'Motion', 'type': 'motion'},
-                    {'name': 'Door Status', 'type': 'contact'}
+                'room_type': 'bedroom',
+                'devices': [
+                    {'device_type': 'Security System'}
                 ]
             }
         ]
     },
     'Away Mode': {
         'type': 'security',
-        'rooms': ['living_room', 'garage', 'bedroom'],
         'description': 'Whole-home security scenario',
-        'devices': [
+        'containers': [
             {
-                'device': 'Security System',
-                'sensors': ['Motion', 'Door Status'],
-                'rooms': ['living_room', 'garage', 'bedroom']
+                'room_type': 'living_room',
+                'devices': [
+                    {'device_type': 'Security System'}
+                ]
+            },
+            {
+                'room_type': 'garage',
+                'devices': [
+                    {'device_type': 'Security System'}
+                ]
+            },
+            {
+                'room_type': 'bedroom',
+                'devices': [
+                    {'device_type': 'Security System'}
+                ]
             }
         ]
     },
     'Work From Home': {
         'type': 'work',
-        'room_type': 'office',
         'description': 'Settings optimized for working from home',
-        'devices': [
+        'containers': [
             {
-                'name': 'Environmental Monitor',
-                'type': 'environmental',
-                'sensors': [
-                    {'name': 'Temperature', 'type': 'temperature', 'unit': '°C'}
+                'room_type': 'office',
+                'devices': [
+                    {'device_type': 'Environmental Monitor'}
                 ]
             }
         ]
     },
     'Entertainment Mode': {
         'type': 'entertainment',
-        'room_type': 'living_room',
         'description': 'Settings for watching movies or entertainment',
-        'devices': [
+        'containers': [
             {
-                'name': 'Light Control',
-                'type': 'lighting',
-                'sensors': [
-                    {'name': 'Light Level', 'type': 'light', 'unit': 'lux'}
+                'room_type': 'living_room',
+                'devices': [
+                    {'device_type': 'Light Control'}
                 ]
             }
         ]
     },
     'Guest Mode': {
         'type': 'guest',
-        'room_type': 'living_room',
         'description': 'Comfortable settings for guests',
-        'devices': [
+        'containers': [
             {
-                'name': 'Environmental Monitor',
-                'type': 'environmental',
-                'sensors': [
-                    {'name': 'Temperature', 'type': 'temperature', 'unit': '°C'}
+                'room_type': 'living_room',
+                'devices': [
+                    {'device_type': 'Environmental Monitor'}
                 ]
             }
         ]
     },
     'Emergency Mode': {
         'type': 'emergency',
-        'room_type': 'living_room',
         'description': 'Highest security and safety settings',
-        'devices': [
+        'containers': [
             {
-                'name': 'Security System',
-                'type': 'security',
-                'sensors': [
-                    {'name': 'Motion', 'type': 'motion'},
-                    {'name': 'Door Status', 'type': 'contact'}
+                'room_type': 'living_room',
+                'devices': [
+                    {'device_type': 'Security System'}
                 ]
             }
         ]
     },
     'Eco Mode': {
         'type': 'efficiency',
-        'room_type': 'living_room',
         'description': 'Maximum energy saving settings',
-        'devices': [
+        'containers': [
             {
-                'name': 'Environmental Monitor',
-                'type': 'environmental',
-                'sensors': [
-                    {'name': 'Temperature', 'type': 'temperature', 'unit': '°C'}
+                'room_type': 'living_room',
+                'devices': [
+                    {'device_type': 'Environmental Monitor'}
                 ]
             }
         ]
     },
     'Party Mode': {
         'type': 'comfort',
-        'room_type': 'living_room',
         'description': 'Social gathering settings',
-        'devices': [
+        'containers': [
             {
-                'name': 'Light Control',
-                'type': 'lighting',
-                'sensors': [
-                    {'name': 'Light Level', 'type': 'light', 'unit': 'lux'}
+                'room_type': 'living_room',
+                'devices': [
+                    {'device_type': 'Light Control'}
                 ]
             }
         ]

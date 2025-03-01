@@ -472,9 +472,9 @@ class SmartHomeSimulator:
 
             # Introduce a more dynamic variation based on time and weather
             variation = random.uniform(-sensor.variation_range, sensor.variation_range)
-            if self.env_state.weather_condition.humidity > 70:  # Example condition for high humidity
+            if self.env_state.humidity_percent > 70:  # Example condition for high humidity
                 variation *= 0.8  # Reduce variation in high humidity
-            elif self.env_state.weather_condition.humidity < 30:  # Example condition for low humidity
+            elif self.env_state.humidity_percent < 30:  # Example condition for low humidity
                 variation *= 1.2  # Increase variation in low humidity
 
             # Combine all factors

@@ -46,19 +46,10 @@ def initialize_scenarios():
             
             for scenario_name, template in SCENARIO_TEMPLATES.items():
                 # Validate template structure
-                required_fields = ['type', 'description', 'devices']
+                required_fields = ['type', 'description', 'containers']
                 if not all(field in template for field in required_fields):
                     missing = [f for f in required_fields if f not in template]
                     logger.error(f"Scenario '{scenario_name}' missing required fields: {', '.join(missing)}")
-                    continue
-                
-                # Handle both new and legacy template formats
-                rooms = template.get('rooms', [])
-                if 'room_type' in template:  # Legacy support
-                    rooms = [template['room_type']]
-                
-                if not rooms:
-                    logger.error(f"Scenario '{scenario_name}' has no rooms defined")
                     continue
                 
                 # Create scenario
@@ -71,7 +62,12 @@ def initialize_scenarios():
                 session.flush()
 
                 # Create containers for each room in the scenario
-                for room_type in rooms:
+                for container_info in template['containers']:
+                    room_type = container_info.get('room_type')
+                    if not room_type:
+                        logger.error(f"Container missing room_type in scenario {scenario_name}")
+                        continue
+                    
                     room = session.query(Room).filter_by(room_type=room_type).first()
                     if not room:
                         logger.error(f"Room type {room_type} not found for scenario {scenario_name}")
@@ -88,25 +84,14 @@ def initialize_scenarios():
                     session.flush()
 
                     # Create or reuse devices for this room-container combination
-                    for device_template in template['devices']:
-                        # Support both new and legacy device formats
-                        device_name = device_template.get('device') or device_template.get('name')
-                        device_type = DEVICE_TEMPLATES.get(device_name, {}).get('type')
-                        
-                        if not device_type:
-                            logger.error(f"Invalid device template: {device_name}")
-                            continue
-                        
-                        # Check if device belongs in this room
-                        device_rooms = device_template.get('rooms', [])
-                        if 'room_type' in device_template:  # Legacy support
-                            device_rooms = [device_template['room_type']]
-                        
-                        if device_rooms and room_type not in device_rooms:
+                    for device_info in container_info.get('devices', []):
+                        device_type = device_info.get('device_type')
+                        if not device_type or device_type not in DEVICE_TEMPLATES:
+                            logger.error(f"Invalid device type: {device_type} in scenario {scenario_name}")
                             continue
                         
                         # Check if device already exists
-                        device_key = (room.name, device_name)
+                        device_key = (room.name, device_type)
                         if device_key in existing_devices:
                             # Update container reference for existing device
                             device = existing_devices[device_key]
@@ -115,8 +100,8 @@ def initialize_scenarios():
                         else:
                             # Create new device
                             device = Device(
-                                name=f"{room.name} {device_name}",
-                                type=device_type,
+                                name=f"{room.name} {device_type}",
+                                type=DEVICE_TEMPLATES[device_type]['type'],
                                 room=room,
                                 container=container
                             )
@@ -124,7 +109,7 @@ def initialize_scenarios():
                             session.commit()
                             existing_devices[device_key] = device
                 
-                logger.debug(f"Created scenario '{scenario_name}' spanning {len(rooms)} rooms")
+                logger.debug(f"Created scenario '{scenario_name}' with {len(template['containers'])} containers")
             
             session.commit()
             logger.success("Multi-room scenarios initialized successfully")
